@@ -41,11 +41,36 @@ def test_bad_bbox_raises_config_error_naming_the_variable():
 
 @pytest.mark.parametrize("raw,expected", [
     ("true", True), ("True", True), ("1", True), ("yes", True), ("on", True),
-    ("false", False), ("0", False), ("no", False), ("off", False), ("", False),
+    ("false", False), ("0", False), ("no", False), ("off", False),
 ])
 def test_boolean_parsing(raw, expected):
     s = Settings.from_env({**MINIMAL, "DISPLAY_HISTORY": raw})
     assert s.display_history is expected
+
+
+@pytest.mark.parametrize("var,attr,default", [
+    ("DISPLAY_HISTORY", "display_history", False),
+    ("PRIORITY_SELECTION", "priority_selection", True),
+])
+def test_blank_boolean_falls_back_to_the_default(var, attr, default):
+    """Blank means unset, as it does for the numeric parsers.
+
+    Treating it as False would silently invert PRIORITY_SELECTION, whose
+    documented default is True.
+    """
+    assert getattr(Settings.from_env({**MINIMAL, var: ""}), attr) is default
+    assert getattr(Settings.from_env({**MINIMAL, var: "   "}), attr) is default
+
+
+def test_unparseable_boolean_is_rejected():
+    with pytest.raises(ConfigError, match="DISPLAY_HISTORY"):
+        Settings.from_env({**MINIMAL, "DISPLAY_HISTORY": "maybe"})
+
+
+def test_invalid_log_level_is_rejected():
+    """A typo must fail at startup, not silently degrade to INFO."""
+    with pytest.raises(ConfigError, match="LOG_LEVEL"):
+        Settings.from_env({**MINIMAL, "LOG_LEVEL": "INF0"})
 
 
 def test_exclude_categories_parsed():
