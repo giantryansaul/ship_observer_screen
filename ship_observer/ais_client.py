@@ -1,9 +1,16 @@
-from __future__ import annotations
-
+import asyncio
+import json
+import logging
+import random
 import re
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+import websockets
+
+from .config import Settings
 
 POSITION_REPORT = "PositionReport"
 SHIP_STATIC_DATA = "ShipStaticData"
@@ -102,3 +109,118 @@ def parse_envelope(envelope: Any, received_at: datetime) -> AisMessage | None:
         lon=_coord("longitude"),
         payload=payload,
     )
+
+
+log = logging.getLogger(__name__)
+
+AIS_STREAM_URL = "wss://stream.aisstream.io/v0/stream"
+
+EventCallback = Callable[[str, str, str, "dict | None"], None]
+
+
+def build_subscription(settings: Settings) -> dict[str, Any]:
+    """AISStream accepts only these four keys. There is no ship-type filter,
+    which is why all type filtering happens locally.
+    """
+    return {
+        "APIKey": settings.ais_stream_api_key,
+        "BoundingBoxes": settings.bbox.to_aisstream(),
+        "FilterMessageTypes": list(SUBSCRIBED_TYPES),
+    }
+
+
+class AisClient:
+    def __init__(
+        self,
+        settings: Settings,
+        on_event: EventCallback | None = None,
+        connect: Callable[..., Any] | None = None,
+        backoff_base: float = 1.0,
+        backoff_max: float = 60.0,
+    ) -> None:
+        self._settings = settings
+        self._on_event = on_event or (lambda *args: None)
+        self._connect = connect or websockets.connect
+        self._backoff_base = backoff_base
+        self._backoff_max = backoff_max
+        self._attempt = 0
+        self._connected = False
+        self._last_message_at: datetime | None = None
+        self.dropped_frames = 0
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @property
+    def last_message_at(self) -> datetime | None:
+        return self._last_message_at
+
+    def _next_backoff(self) -> float:
+        """Exponential with full jitter, capped. Jitter avoids a thundering
+        herd if the service and the upstream restart together.
+        """
+        delay = min(self._backoff_base * (2 ** self._attempt), self._backoff_max)
+        self._attempt += 1
+        return delay * (0.5 + random.random() * 0.5) if delay else 0.0
+
+    def _reset_backoff(self) -> None:
+        self._attempt = 0
+
+    def _event(self, level: str, message: str, detail: dict | None = None) -> None:
+        self._on_event(level, "ws", message, detail)
+
+    async def stream(self) -> AsyncIterator[AisMessage]:
+        """Yield AisMessages forever, reconnecting as needed.
+
+        Never raises for network problems; the caller can treat this as an
+        infinite source. Cancellation propagates normally.
+        """
+        while True:
+            try:
+                async with self._connect(
+                    AIS_STREAM_URL, ping_interval=20, ping_timeout=20
+                ) as socket:
+                    # AISStream drops the connection if the subscription does
+                    # not arrive within 3 seconds.
+                    await socket.send(json.dumps(build_subscription(self._settings)))
+                    self._connected = True
+                    self._reset_backoff()
+                    self._event("INFO", "connected and subscribed", {
+                        "bbox": self._settings.bbox.to_aisstream(),
+                    })
+
+                    async for frame in socket:
+                        message = self._decode(frame)
+                        if message is None:
+                            continue
+                        self._last_message_at = message.received_at
+                        yield message
+            except asyncio.CancelledError:
+                self._connected = False
+                raise
+            except Exception as exc:
+                self._connected = False
+                self._event("WARN", f"disconnected: {type(exc).__name__}: {exc}")
+            else:
+                self._connected = False
+                self._event("WARN", "disconnected: stream ended")
+
+            delay = self._next_backoff()
+            self._event("INFO", f"reconnecting in {delay:.1f}s",
+                        {"attempt": self._attempt})
+            if delay:
+                await asyncio.sleep(delay)
+
+    def _decode(self, frame: Any) -> AisMessage | None:
+        try:
+            envelope = json.loads(frame)
+        except (TypeError, ValueError):
+            self.dropped_frames += 1
+            log.debug("undecodable frame: %r", frame)
+            return None
+        message = parse_envelope(envelope, datetime.now(timezone.utc))
+        if message is None:
+            self.dropped_frames += 1
+            log.debug("unparseable envelope: %r", envelope)
+        return message
