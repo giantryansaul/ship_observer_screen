@@ -4996,6 +4996,19 @@ def test_app_js_polls_every_api_endpoint():
     js = (STATIC / "app.js").read_text()
     for endpoint in ("/api/traffic-summary", "/api/events"):
         assert endpoint in js
+
+
+def test_app_js_never_interpolates_event_fields_into_innerhtml():
+    """event.message can carry AIS-broadcast ship-name text. AIS is an open,
+    unauthenticated protocol, so that string is attacker-controlled - it must
+    be assigned via textContent, never interpolated into an innerHTML string,
+    or a malicious ship name becomes a stored XSS payload on this page.
+    """
+    js = (STATIC / "app.js").read_text()
+    assert "e.message" not in re.sub(r"\.textContent\s*=\s*e\.message", "", js), (
+        "event.message must only ever be assigned via .textContent"
+    )
+    assert "msg.textContent = e.message" in js
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
