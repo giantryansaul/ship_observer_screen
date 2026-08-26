@@ -1,0 +1,26 @@
+[project]
+name = "ship-observer"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "websockets>=12.0",
+    "aiohttp>=3.9",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ship_observer*"]
+
+[tool.setuptools.package-data]
+ship_observer = ["render/fonts/*.bdf", "web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
