@@ -1,0 +1,43 @@
+:root {
+  --bg: #0d1117; --card: #161b22; --line: #30363d;
+  --fg: #e6edf3; --muted: #8b949e;
+  --good: #3fb950; --bad: #f85149; --warn: #d29922;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 1rem; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1rem; }
+h1 { font-size: 1.1rem; margin: 0; letter-spacing: 0.08em; text-transform: uppercase; }
+h2 { font-size: 0.85rem; margin: 0 0 0.75rem; color: var(--muted);
+     text-transform: uppercase; letter-spacing: 0.08em;
+     display: flex; gap: 0.5rem; align-items: center; }
+.status { font-size: 0.85rem; color: var(--muted); }
+.status.good { color: var(--good); }
+.status.bad { color: var(--bad); }
+main { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line);
+        border-radius: 6px; padding: 1rem; overflow-x: auto; }
+.mirror { display: flex; flex-direction: column; align-items: center; }
+canvas { image-rendering: pixelated; border: 1px solid var(--line); background: #000; }
+.hint { color: var(--muted); font-size: 0.75rem; margin: 0.5rem 0 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.8rem; }
+th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: normal; }
+tr.filtered td { color: var(--muted); text-decoration: line-through; }
+tr.past td { opacity: 0.6; font-style: italic; }
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.event { display: grid; grid-template-columns: 4rem 3.5rem 5rem 1fr;
+         gap: 0.5rem; font-size: 0.78rem; padding: 0.15rem 0;
+         border-bottom: 1px solid var(--line); }
+.event .ts, .event .cat { color: var(--muted); }
+.event.WARN .lvl { color: var(--warn); }
+.event.ERROR .lvl { color: var(--bad); }
+#event-log { max-height: 22rem; overflow-y: auto; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem;
+     margin: 0; font-size: 0.8rem; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+select { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+         border-radius: 4px; padding: 0.1rem 0.3rem; font: inherit; font-size: 0.75rem; }

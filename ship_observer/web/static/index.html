@@ -1,3 +1,64 @@
 <!doctype html>
-<html><head><title>Ship Observer</title></head>
-<body><canvas id="panel"></canvas></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ship Observer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Ship Observer</h1>
+    <div id="status" class="status">connecting&hellip;</div>
+  </header>
+
+  <main>
+    <section class="card mirror">
+      <h2>Panel mirror</h2>
+      <canvas id="panel" width="64" height="64"></canvas>
+      <p class="hint">Pixel-accurate mirror of the LED matrix.</p>
+    </section>
+
+    <section class="card">
+      <h2>Vessels in the box</h2>
+      <table id="live-table">
+        <thead>
+          <tr><th>Slot</th><th>Name</th><th>MMSI</th><th>Category</th>
+              <th>Pri</th><th>Len</th><th>Call sign</th><th>Destination</th>
+              <th>Status</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Traffic summary
+        <select id="window">
+          <option value="1d">24 hours</option>
+          <option value="7d" selected>7 days</option>
+        </select>
+      </h2>
+      <div id="traffic-summary"></div>
+    </section>
+
+    <section class="card">
+      <h2>Events
+        <select id="level">
+          <option value="">all</option>
+          <option value="INFO" selected>info+</option>
+          <option value="WARN">warn+</option>
+          <option value="ERROR">error</option>
+        </select>
+      </h2>
+      <div id="event-log"></div>
+    </section>
+
+    <section class="card">
+      <h2>Configuration</h2>
+      <div id="config"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
