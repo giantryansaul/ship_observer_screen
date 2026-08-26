@@ -1443,7 +1443,7 @@ log = logging.getLogger(__name__)
 
 AIS_STREAM_URL = "wss://stream.aisstream.io/v0/stream"
 
-EventCallback = Callable[[str, str, str, "dict | None"], None]
+EventCallback = Callable[[str, str, str, dict | None], None]
 
 
 def build_subscription(settings: Settings) -> dict[str, Any]:
@@ -1558,6 +1558,8 @@ The top of the file must now carry the union of both halves' imports. After this
 step the import block reads exactly:
 
 ```python
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -4330,7 +4332,7 @@ from .null import NullDriver
 
 log = logging.getLogger(__name__)
 
-EventCallback = Callable[[str, str, str, "dict | None"], None]
+EventCallback = Callable[[str, str, str, dict | None], None]
 
 
 def create_driver(settings: Settings,
