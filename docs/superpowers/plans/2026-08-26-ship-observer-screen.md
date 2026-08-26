@@ -4363,7 +4363,16 @@ class RgbMatrixDriver:
         self._wake.set()
 
     def _run(self) -> None:
-        from PIL import Image  # provided by the rgbmatrix build
+        try:
+            from PIL import Image  # provided by the rgbmatrix build
+        except Exception:
+            # A default thread exception only prints to stderr, bypassing
+            # this project's entire event/log pipeline - log through it
+            # explicitly so a broken install is diagnosable from the journal,
+            # not just a silently-dark panel.
+            log.exception("PIL is required by the rgbmatrix driver but is "
+                          "not available; the render thread cannot start")
+            return
 
         while not self._stop.is_set():
             self._wake.wait(timeout=0.5)
