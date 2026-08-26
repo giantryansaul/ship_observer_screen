@@ -1154,7 +1154,7 @@ git commit -m "feat: AIS envelope and timestamp parsing"
 
 **Interfaces:**
 - Consumes: `Settings` (Task 3), `AisMessage`/`parse_envelope` (Task 4)
-- Produces: `AisClient(settings, on_event=None, connect=None)` with `async def stream() -> AsyncIterator[AisMessage]`, `build_subscription(settings) -> dict`, properties `connected: bool` and `last_message_at: datetime | None`
+- Produces: `AisClient(settings, on_event=None, connect=None, backoff_base=1.0, backoff_max=60.0)` with `async def stream() -> AsyncIterator[AisMessage]`, `build_subscription(settings) -> dict`, properties `connected: bool` and `last_message_at: datetime | None`
 
 `on_event` is a callback `(level: str, category: str, message: str, detail: dict | None) -> None`. It is synchronous and must never block; `__main__` supplies one that schedules a storage write.
 
@@ -3715,7 +3715,7 @@ This is the task that makes the arithmetic in Section 8.1 of the spec real: thre
 - Test: `tests/render/test_layout.py`
 
 **Interfaces:**
-- Consumes: `Canvas`, `draw_text`, `max_chars`, `icon_for`, `Scroller`, `Slots`, `Vessel`
+- Consumes: `Canvas`, `RGB`, `draw_text`, `text_width` (Task 11), `icon_for` (Task 12), `Scroller` (Task 13), `Slots` (Task 7), `Vessel` (Task 1)
 - Produces: `BLOCK_H = 19`, `DIVIDER_H = 7`, `ICON_X = 0`, `TEXT_X = 10`, `NAME_BOX_W = 54`, `LINE2_BOX_W = 64`, `capacity(panel_height) -> int`, `render_frame(canvas, slots, scroller, dt, stale=False) -> None`, `format_line2(vessel) -> str`
 
 - [ ] **Step 1: Write the failing test**
@@ -5090,7 +5090,7 @@ The five concurrent tasks, signal handling, and the storage-write policy that ke
 
 **Interfaces:**
 - Consumes: everything from Tasks 1–17
-- Produces: `Service(settings, driver=None, client=None)` with `async run()`, `async ingest_loop()`, `async render_loop()`, `async registry_prune_loop()`, `async retention_loop()`, `record_event(level, category, message, detail=None)`, and `async main(argv=None) -> int`
+- Produces: `Service(settings, driver=None, client=None)` with `async run()`, `async ingest_loop()`, `async render_loop()`, `async registry_prune_loop()`, `async retention_loop()`, `record_event(level, category, message, detail=None)`; and in `__main__.py`, `main() -> int` (synchronous, no arguments) wrapping `async _run() -> int`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -5921,7 +5921,7 @@ A fake AISStream websocket server driving the real client, registry, storage, an
 
 **Interfaces:**
 - Consumes: everything
-- Produces: `FakeAisStream` (async context manager exposing `.connect`, `.subscriptions`, `.drop_next_connection()`)
+- Produces: `FakeAisStream` — a plain class (NOT an async context manager) exposing `.connect(url, **kwargs)`, `.subscriptions`, `.connections`, `.drop_next_connection()`; the object `.connect()` returns is the async context manager. Also `envelope(mmsi, message_type, **payload)`.
 
 - [ ] **Step 1: Make `tests/integration` a package**
 
