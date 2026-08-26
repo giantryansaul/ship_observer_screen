@@ -126,6 +126,22 @@ def test_prune_is_exclusive_at_the_boundary():
     assert r.prune(now=T0 + timedelta(seconds=901)) != []
 
 
+def test_prune_orders_multiple_expirations_by_last_seen_not_insertion_order():
+    """Insert 1, 2, 3 but make vessel 1 the LAST to have been heard from, so a
+    naive dict-iteration return would disagree with the required last_seen order.
+    """
+    r = VesselRegistry(settings(SHIP_TIMEOUT_SECONDS="900"))
+    r.apply(position(1, T0))                              # inserted first
+    r.apply(position(2, T0 + timedelta(minutes=1)))        # inserted second
+    r.apply(position(3, T0 + timedelta(minutes=2)))        # inserted third
+    r.apply(position(1, T0 + timedelta(minutes=5)))        # update: 1's last_seen now latest
+
+    expired = r.prune(now=T0 + timedelta(minutes=21))      # cutoff = T0+6min, clears all three
+
+    assert [v.mmsi for v in expired] == [2, 3, 1], "prune() must return ascending last_seen order"
+    assert [v.mmsi for v in r.departed()] == [1, 3, 2], "departed() is most-recently-processed first"
+
+
 def test_live_is_ordered_newest_entrant_first():
     r = VesselRegistry(settings())
     r.apply(position(1, T0))
