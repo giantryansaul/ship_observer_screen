@@ -1735,6 +1735,22 @@ def test_prune_is_exclusive_at_the_boundary():
     assert r.prune(now=T0 + timedelta(seconds=901)) != []
 
 
+def test_prune_orders_multiple_expirations_by_last_seen_not_insertion_order():
+    """Insert 1, 2, 3 but make vessel 1 the LAST to have been heard from, so a
+    naive dict-iteration return would disagree with the required last_seen order.
+    """
+    r = VesselRegistry(settings(SHIP_TIMEOUT_SECONDS="900"))
+    r.apply(position(1, T0))                              # inserted first
+    r.apply(position(2, T0 + timedelta(minutes=1)))        # inserted second
+    r.apply(position(3, T0 + timedelta(minutes=2)))        # inserted third
+    r.apply(position(1, T0 + timedelta(minutes=5)))        # update: 1's last_seen now latest
+
+    expired = r.prune(now=T0 + timedelta(minutes=21))      # cutoff = T0+6min, clears all three
+
+    assert [v.mmsi for v in expired] == [2, 3, 1], "prune() must return ascending last_seen order"
+    assert [v.mmsi for v in r.departed()] == [1, 3, 2], "departed() is most-recently-processed first"
+
+
 def test_live_is_ordered_newest_entrant_first():
     r = VesselRegistry(settings())
     r.apply(position(1, T0))
@@ -1800,7 +1816,7 @@ from typing import Any, Callable
 
 from .ais_client import POSITION_REPORT, SHIP_STATIC_DATA, AisMessage
 from .config import Settings
-from .models import ShipCategory, Vessel
+from .models import Vessel
 from .shiptypes import classify, priority_for
 
 
@@ -1906,24 +1922,43 @@ class VesselRegistry:
         vessel.call_sign = _clean(p.get("CallSign")) or vessel.call_sign
         vessel.destination = _clean(p.get("Destination")) or vessel.destination
 
+        # Real AIS static data can arrive as partial retransmissions (Class B
+        # splits it across separate frames; any decoder can also just drop a
+        # field). A later message missing a field must never regress state a
+        # prior message already resolved - keep vessel.<field> whenever the
+        # new value is absent or malformed, exactly like the string fields
+        # above. This matters most for category/priority: a TANKER silently
+        # reverting to UNKNOWN would let it lose its display slot.
         ship_type = p.get("Type")
-        vessel.ship_type = ship_type if isinstance(ship_type, int) else None
-        vessel.category = classify(vessel.ship_type)
-        vessel.priority = priority_for(vessel.category)
+        if isinstance(ship_type, int):
+            vessel.ship_type = ship_type
+            vessel.category = classify(vessel.ship_type)
+            vessel.priority = priority_for(vessel.category)
 
         imo = p.get("ImoNumber")
-        vessel.imo = imo if isinstance(imo, int) and imo > 0 else None
+        if isinstance(imo, int) and imo > 0:
+            vessel.imo = imo
 
         dim = p.get("Dimension")
         if isinstance(dim, dict):
             a, b = _number(dim.get("A")), _number(dim.get("B"))
             c, d = _number(dim.get("C")), _number(dim.get("D"))
-            vessel.length_m = a + b if a is not None and b is not None else None
-            vessel.beam_m = c + d if c is not None and d is not None else None
+            if a is not None and b is not None:
+                vessel.length_m = a + b
+            if c is not None and d is not None:
+                vessel.beam_m = c + d
 
-        vessel.draught_m = _number(p.get("MaximumStaticDraught"))
-        vessel.eta = _format_eta(p.get("Eta"))
+        draught = _number(p.get("MaximumStaticDraught"))
+        if draught is not None:
+            vessel.draught_m = draught
+
+        eta = _format_eta(p.get("Eta"))
+        if eta is not None:
+            vessel.eta = eta
+
         vessel.static_resolved = True
+        # raw_static intentionally always overwrites: it exists to show what
+        # the most recent message actually contained, partial or not.
         vessel.raw_static = dict(p)
 
     def _depart(self, vessel: Vessel, when: datetime, reason: str) -> None:
@@ -1936,8 +1971,11 @@ class VesselRegistry:
         """Expire vessels silent for longer than SHIP_TIMEOUT_SECONDS."""
         now = now or self._clock()
         cutoff = now - timedelta(seconds=self._settings.ship_timeout_seconds)
-        expired = [v for v in self._live.values() if v.last_seen < cutoff]
-        for vessel in sorted(expired, key=lambda v: v.last_seen):
+        expired = sorted(
+            (v for v in self._live.values() if v.last_seen < cutoff),
+            key=lambda v: v.last_seen,
+        )
+        for vessel in expired:
             self._depart(vessel, now, "timeout")
         return expired
 
