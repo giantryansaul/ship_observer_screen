@@ -4622,6 +4622,26 @@ async def test_websocket_pushes_state_then_frames(client):
         assert second["type"] == "frame"
         assert base64.b64decode(second["rgb"]) == client.app_state.latest_frame
         assert second["width"] == 64 and second["height"] == 64
+
+
+async def test_broadcast_frame_and_broadcast_state_reach_a_connected_client(client):
+    """The periodic-broadcast path a later task's render loop actually drives,
+    distinct from the initial-connect push tested above.
+    """
+    from ship_observer.web.server import broadcast_frame, broadcast_state
+
+    async with client.ws_connect("/ws/frames") as ws:
+        await ws.receive_str()  # initial state push on connect - drain it
+
+        client.app_state.latest_frame = bytes([9, 9, 9] * (64 * 64))
+        await broadcast_frame(client.app, client.app_state)
+        frame_msg = json.loads(await ws.receive_str())
+        assert frame_msg["type"] == "frame"
+        assert base64.b64decode(frame_msg["rgb"]) == client.app_state.latest_frame
+
+        await broadcast_state(client.app, client.app_state)
+        state_msg = json.loads(await ws.receive_str())
+        assert state_msg["type"] == "state"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
