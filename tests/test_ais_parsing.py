@@ -115,6 +115,16 @@ def test_malformed_envelopes_return_none_and_never_raise(envelope):
     assert parse_envelope(envelope, NOW) is None
 
 
+@pytest.mark.parametrize("mmsi", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_mmsi_returns_none_and_never_raises(mmsi):
+    """json.loads accepts bare Infinity/NaN tokens, so these reach us from the wire."""
+    envelope = {
+        **POSITION_ENVELOPE,
+        "MetaData": {**POSITION_ENVELOPE["MetaData"], "MMSI": mmsi},
+    }
+    assert parse_envelope(envelope, NOW) is None
+
+
 def test_blank_ship_name_becomes_none():
     envelope = {
         **POSITION_ENVELOPE,

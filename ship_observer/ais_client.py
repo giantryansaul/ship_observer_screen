@@ -75,7 +75,11 @@ def parse_envelope(envelope: Any, received_at: datetime) -> AisMessage | None:
         return None
     try:
         mmsi = int(meta["MMSI"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
+        # OverflowError matters: json.loads accepts bare Infinity/-Infinity
+        # tokens by default, and int(float('inf')) raises. Without it a single
+        # corrupt frame escapes this function, and the transport half would
+        # misread that as a disconnect and reconnect on every such frame.
         return None
 
     message = envelope.get("Message")
