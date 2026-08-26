@@ -593,11 +593,36 @@ def test_bad_bbox_raises_config_error_naming_the_variable():
 
 @pytest.mark.parametrize("raw,expected", [
     ("true", True), ("True", True), ("1", True), ("yes", True), ("on", True),
-    ("false", False), ("0", False), ("no", False), ("off", False), ("", False),
+    ("false", False), ("0", False), ("no", False), ("off", False),
 ])
 def test_boolean_parsing(raw, expected):
     s = Settings.from_env({**MINIMAL, "DISPLAY_HISTORY": raw})
     assert s.display_history is expected
+
+
+@pytest.mark.parametrize("var,attr,default", [
+    ("DISPLAY_HISTORY", "display_history", False),
+    ("PRIORITY_SELECTION", "priority_selection", True),
+])
+def test_blank_boolean_falls_back_to_the_default(var, attr, default):
+    """Blank means unset, as it does for the numeric parsers.
+
+    Treating it as False would silently invert PRIORITY_SELECTION, whose
+    documented default is True.
+    """
+    assert getattr(Settings.from_env({**MINIMAL, var: ""}), attr) is default
+    assert getattr(Settings.from_env({**MINIMAL, var: "   "}), attr) is default
+
+
+def test_unparseable_boolean_is_rejected():
+    with pytest.raises(ConfigError, match="DISPLAY_HISTORY"):
+        Settings.from_env({**MINIMAL, "DISPLAY_HISTORY": "maybe"})
+
+
+def test_invalid_log_level_is_rejected():
+    """A typo must fail at startup, not silently degrade to INFO."""
+    with pytest.raises(ConfigError, match="LOG_LEVEL"):
+        Settings.from_env({**MINIMAL, "LOG_LEVEL": "INF0"})
 
 
 def test_exclude_categories_parsed():
@@ -665,9 +690,10 @@ from .models import BoundingBox, ShipCategory
 from .shiptypes import parse_category_names
 
 _TRUE = {"1", "true", "yes", "on"}
-_FALSE = {"0", "false", "no", "off", ""}
+_FALSE = {"0", "false", "no", "off"}
 
 VALID_DRIVERS = ("auto", "rgbmatrix", "null")
+VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL")
 
 
 class ConfigError(Exception):
@@ -713,7 +739,11 @@ def _float(env: Mapping[str, str], name: str, default: float,
 
 def _bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     raw = env.get(name)
-    if raw is None:
+    if raw is None or not raw.strip():
+        # Blank means "unset", matching _int/_float. Treating an empty value as
+        # False would silently invert every default that is True - an operator
+        # who writes `PRIORITY_SELECTION=` would get the opposite of the
+        # documented default, with nothing in the logs to say so.
         return default
     normalized = raw.strip().lower()
     if normalized in _TRUE:
@@ -721,12 +751,15 @@ def _bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     if normalized in _FALSE:
         return False
     raise ConfigError(
-        f"{name} must be one of {sorted(_TRUE | _FALSE - {''})}, got {raw!r}"
+        f"{name} must be one of {sorted(_TRUE | _FALSE)}, got {raw!r}"
     )
 
 
 @dataclass(frozen=True)
 class Settings:
+    # repr=False keeps the key out of tracebacks and log lines. NOTE: it does
+    # NOT protect dataclasses.asdict(), which still returns the real key - use
+    # redacted() for anything that crosses a process or network boundary.
     ais_stream_api_key: str = field(repr=False)
     bbox: BoundingBox
 
@@ -788,6 +821,12 @@ class Settings:
                 f"DISPLAY_DRIVER must be one of {VALID_DRIVERS}, got {driver!r}"
             )
 
+        log_level = env.get("LOG_LEVEL", "INFO").strip().upper() or "INFO"
+        if log_level not in VALID_LOG_LEVELS:
+            raise ConfigError(
+                f"LOG_LEVEL must be one of {VALID_LOG_LEVELS}, got {log_level!r}"
+            )
+
         record_raw = env.get("RECORD_RAW_PATH", "").strip()
 
         return cls(
@@ -821,11 +860,15 @@ class Settings:
                 or "/var/lib/ship-observer/ships.db"
             ),
             record_raw_path=Path(record_raw) if record_raw else None,
-            log_level=env.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
+            log_level=log_level,
         )
 
     def redacted(self) -> dict[str, Any]:
-        """Safe for the web boundary. The API key never crosses it."""
+        """Safe for the web boundary. The API key never crosses it.
+
+        Always use this rather than dataclasses.asdict(), which would include
+        the real key: field(repr=False) suppresses __repr__ only.
+        """
         return {
             "ais_stream_api_key": "***redacted***",
             "bbox": {
@@ -889,6 +932,8 @@ PRIORITY_SELECTION=true
 DISPLAY_DRIVER=auto
 MATRIX_ROWS=64
 MATRIX_COLS=64
+MATRIX_CHAIN=1
+MATRIX_PARALLEL=1
 MATRIX_BRIGHTNESS=60
 MATRIX_GPIO_SLOWDOWN=4
 MATRIX_HARDWARE_MAPPING=adafruit-hat-pwm
