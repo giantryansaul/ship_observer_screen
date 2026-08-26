@@ -4005,6 +4005,30 @@ def test_render_clears_the_canvas_between_frames():
     render_frame(c, Slots(live=[vessel(1), vessel(2), vessel(3)]), Scroller(), dt=0.1)
     render_frame(c, Slots(), Scroller(), dt=0.1)
     assert c.to_bytes() == bytes(64 * 64 * 3)
+
+
+def test_short_canvas_stops_drawing_instead_of_crashing():
+    """A panel height that doesn't fit a whole number of blocks (here 40px:
+    exactly 2 blocks at 38px, a 3rd would need 38..57 which overflows) must
+    silently stop, not raise or draw a clipped/partial block.
+    """
+    c = Canvas(64, 40)
+    render_frame(c, Slots(live=[vessel(1), vessel(2), vessel(3)]), Scroller(), dt=0.1)
+    lit_rows = {y for y in range(40) for x in range(64)
+                if c.get_pixel(x, y) != (0, 0, 0)}
+    assert max(lit_rows) < BLOCK_H * 2, "only the 2 blocks that fit should draw"
+
+
+def test_retain_keeps_history_only_scroll_state():
+    """A vessel visible ONLY as history (not live) must still have its scroll
+    state retained - otherwise its scrolling text visibly resets every frame.
+    """
+    scroller = Scroller()
+    c = Canvas(64, 64)
+    long_name_vessel = vessel(9, name="A" * 40)
+    render_frame(c, Slots(history=[long_name_vessel], show_divider=True),
+                scroller, dt=0.1)
+    assert (9, "name") in scroller._states
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
