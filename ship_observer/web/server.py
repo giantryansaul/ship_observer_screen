@@ -157,23 +157,39 @@ async def _state(request: web.Request) -> web.Response:
     return web.json_response(request.app[STATE_KEY].state_json())
 
 
+def _limit(request: web.Request, default: int = 200) -> int:
+    raw = request.query.get("limit", str(default))
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"limit must be an integer, got {raw!r}") from exc
+
+
 async def _ships(request: web.Request) -> web.Response:
     state: AppState = request.app[STATE_KEY]
+    try:
+        limit = _limit(request)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
     rows = await state.storage.query_ships(
         since=_since(request),
         category=request.query.get("category"),
-        limit=int(request.query.get("limit", 200)),
+        limit=limit,
     )
     return web.json_response({"ships": rows})
 
 
 async def _events(request: web.Request) -> web.Response:
     state: AppState = request.app[STATE_KEY]
+    try:
+        limit = _limit(request)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
     rows = await state.storage.query_events(
         since=_since(request),
         level=request.query.get("level"),
         category=request.query.get("category"),
-        limit=int(request.query.get("limit", 200)),
+        limit=limit,
     )
     for row in rows:
         if row.get("detail"):
