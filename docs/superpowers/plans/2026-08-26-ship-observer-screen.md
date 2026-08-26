@@ -1091,6 +1091,16 @@ def test_malformed_envelopes_return_none_and_never_raise(envelope):
     assert parse_envelope(envelope, NOW) is None
 
 
+@pytest.mark.parametrize("mmsi", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_mmsi_returns_none_and_never_raises(mmsi):
+    """json.loads accepts bare Infinity/NaN tokens, so these reach us from the wire."""
+    envelope = {
+        **POSITION_ENVELOPE,
+        "MetaData": {**POSITION_ENVELOPE["MetaData"], "MMSI": mmsi},
+    }
+    assert parse_envelope(envelope, NOW) is None
+
+
 def test_blank_ship_name_becomes_none():
     envelope = {
         **POSITION_ENVELOPE,
@@ -1184,7 +1194,11 @@ def parse_envelope(envelope: Any, received_at: datetime) -> AisMessage | None:
         return None
     try:
         mmsi = int(meta["MMSI"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
+        # OverflowError matters: json.loads accepts bare Infinity/-Infinity
+        # tokens by default, and int(float('inf')) raises. Without it a single
+        # corrupt frame escapes this function, and the transport half would
+        # misread that as a disconnect and reconnect on every such frame.
         return None
 
     message = envelope.get("Message")
