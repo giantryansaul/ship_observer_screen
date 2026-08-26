@@ -34,8 +34,12 @@ SQLite logs for tuning and troubleshooting.
 
 ## 2. Architecture
 
-A single `asyncio` process under one systemd unit. Four concurrent tasks share an
+A single `asyncio` process under one systemd unit. Five concurrent tasks share an
 in-memory `VesselRegistry`; SQLite is the durable log, never the hot path.
+
+The two pruners are distinct and easy to confuse: the **registry pruner** expires
+vessels from memory after `SHIP_TIMEOUT_SECONDS` (15 min), while the **retention
+pruner** deletes old rows from SQLite on an hourly cycle (Section 9).
 
 ```
                   wss://stream.aisstream.io/v0/stream
@@ -43,11 +47,12 @@ in-memory `VesselRegistry`; SQLite is the durable log, never the hot path.
                         [ ais_client task ]
                                  |  parsed envelopes
                                  v
-                        [ VesselRegistry ]  <-- prune task (15 min timeout)
+                        [ VesselRegistry ]  <-- registry pruner (15 min)
                           |            |
              live+departed|            | visit records / events
                           v            v
                    [ render task ]  [ storage (SQLite, WAL) ]
+                     |         |            ^  <-- retention pruner (hourly)
                      |         |            ^
         latest-frame |         | frames     | queries
              slot    v         v            |
@@ -125,7 +130,7 @@ error rather than crash-looping.
 | `EVENT_LOG_HOURS` | `48` | Retention for `event_log`. |
 | `DISPLAY_HISTORY` | `false` | Enables the LAST SEEN section. |
 | `SHIP_TIMEOUT_SECONDS` | `900` | 15 min silence = departed. |
-| `MAX_SHIPS` | `3` | Display slots. |
+| `MAX_SHIPS` | `3` | Display slots. Clamped to the panel's block capacity (3 at 64x64); see Section 8.1. |
 | `MIN_LENGTH_METERS` | `0` | Hard gate, `0` = off. |
 | `EXCLUDE_CATEGORIES` | *(empty)* | Comma list, e.g. `fishing,sailing`. |
 | `PRIORITY_SELECTION` | `true` | `false` reverts to pure recency selection. |
@@ -308,6 +313,12 @@ divider is exactly 64 px, so every history configuration fits without scaling:
 ```
 
 Blocks lay out top-down from y=0; any remainder is left blank at the bottom.
+
+**Capacity is derived, not hard-coded.** `layout.py` computes
+`capacity = panel_height // BLOCK_H` (3 at 64 px) and the effective slot count is
+`min(MAX_SHIPS, capacity)`. Setting `MAX_SHIPS` above capacity is clamped with a
+WARN event rather than an error, so a taller panel is a config change and not a
+rewrite.
 
 Within a 19 px block, at block origin `y`:
 
