@@ -2748,7 +2748,9 @@ async def test_query_events_filters_by_level_and_category(store):
     await store.log_event("ERROR", "display", "render failed")
 
     assert len(await store.query_events()) == 3
-    assert [r["message"] for r in await store.query_events(level="WARN")] == ["dropped"]
+    # level is a minimum severity: WARN also returns ERROR (newest first).
+    assert [r["message"] for r in await store.query_events(level="WARN")] == [
+        "render failed", "dropped"]
     assert [r["message"] for r in await store.query_events(category="display")] == [
         "render failed"]
 
