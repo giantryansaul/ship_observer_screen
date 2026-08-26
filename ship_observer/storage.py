@@ -138,9 +138,10 @@ class Storage:
         self._conn = conn
 
     async def close(self) -> None:
-        if self._conn is not None:
-            conn, self._conn = self._conn, None
-            await asyncio.to_thread(conn.close)
+        async with self._lock:
+            if self._conn is not None:
+                conn, self._conn = self._conn, None
+                await asyncio.to_thread(conn.close)
 
     async def _execute(self, sql: str, params: Any = ()) -> sqlite3.Cursor:
         async with self._lock:
