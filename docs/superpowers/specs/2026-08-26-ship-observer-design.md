@@ -558,6 +558,22 @@ the venv interpreter.
 `After=network-online.target`, `EnvironmentFile=` pointing at the `.env`,
 journal logging.
 
+**`docs/raspberry-pi-setup.md`** is a first-class deliverable: a standalone,
+follow-along runbook for provisioning the device from a blank SD card, written to
+be usable months from now without reference to this spec. It must cover OS imaging
+and headless SSH/Wi-Fi setup; the HUB75 wiring and power budget (a 64x64 panel can
+draw ~4 A at full white, so panel power is separate from the Pi's supply); the
+`snd_bcm2835` blacklist and `isolcpus=3` kernel argument with the reasoning for
+each; installing pyenv and Python 3.11.13 on Pi OS including the build
+dependencies; building `rpi-rgb-led-matrix` with Python bindings against the venv
+interpreter; the root-versus-`gpio`-group tradeoff for GPIO access; creating
+`/var/lib/ship-observer`; populating `.env`; installing and enabling the systemd
+unit; and a verification section that proves each layer works in order (panel test
+binary, then service status, then `/healthz`, then live ships on the panel). It
+ends with a troubleshooting table for the failures that actually happen: flickering
+output, a blank panel, colors swapped by a wrong `--led-hardware-mapping`,
+websocket auth rejection, and a service that crash-loops on a bad `BBOX`.
+
 **Secrets:** `.env` is gitignored and never logged; `/api/state` redacts the API
 key.
 
