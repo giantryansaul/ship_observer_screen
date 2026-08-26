@@ -123,6 +123,41 @@ async def test_reconnects_after_a_drop_and_resubscribes():
     assert any("disconnect" in e[2].lower() for e in events)
 
 
+async def test_connected_reflects_stream_lifecycle():
+    s = Settings.from_env(MINIMAL)
+    sock = FakeSocket([POSITION_JSON], error=ConnectionError("dropped"))
+    # A nonzero backoff is required here, unlike the 0.0/0.0 used in
+    # test_reconnects_after_a_drop_and_resubscribes above: with a falsy delay,
+    # stream()'s `if delay: await asyncio.sleep(delay)` is skipped entirely,
+    # so a failed connect loops straight into reconnecting against a further
+    # empty FakeSocket with no `await` that actually suspends - a synchronous
+    # busy loop with no checkpoint for `asyncio.sleep(0)` below to hand
+    # control back after. A tiny positive backoff gives stream() a real
+    # suspension point (the reconnect sleep) to land on.
+    client = AisClient(s, connect=make_connect([sock]), backoff_base=0.01, backoff_max=0.01)
+
+    assert client.connected is False
+
+    agen = client.stream()
+    await agen.__anext__()
+    assert client.connected is True
+
+    # The FakeSocket raises ConnectionError after its one queued frame. Pump
+    # the generator once more so stream() reaches the except branch, sets
+    # connected back to False, and suspends inside the reconnect sleep.
+    task = asyncio.ensure_future(agen.__anext__())
+    await asyncio.sleep(0)
+    assert client.connected is False
+
+    # Cancel and let the cancellation actually land before closing the
+    # generator - closing while a prior asend() is still mid-flight raises
+    # "asynchronous generator is already running".
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await agen.aclose()
+
+
 async def test_backoff_grows_then_resets_after_a_successful_message():
     s = Settings.from_env(MINIMAL)
     client = AisClient(s, connect=make_connect([]), backoff_base=1.0, backoff_max=60.0)

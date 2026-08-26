@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -115,7 +117,7 @@ log = logging.getLogger(__name__)
 
 AIS_STREAM_URL = "wss://stream.aisstream.io/v0/stream"
 
-EventCallback = Callable[[str, str, str, "dict | None"], None]
+EventCallback = Callable[[str, str, str, dict | None], None]
 
 
 def build_subscription(settings: Settings) -> dict[str, Any]:
