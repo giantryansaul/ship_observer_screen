@@ -3800,7 +3800,13 @@ class Scroller:
 
         state.timer += dt
         if state.phase == HOLD_START:
-            if state.timer >= self._pause:
+            # Strict '>', not '>=': at exactly timer == pause the phase must
+            # hold for one more tick. This only matters when pause_s happens
+            # to be an exact multiple of the frame interval (a test artifact -
+            # the real 15fps/1.5s default never lands on that boundary), but
+            # '>=' there returns to HOLD_START one tick early and desyncs the
+            # cycle length from what a full hold-scroll-hold period requires.
+            if state.timer > self._pause:
                 state.phase = SCROLLING
                 state.timer = 0.0
         elif state.phase == SCROLLING:
@@ -3810,7 +3816,7 @@ class Scroller:
                 state.phase = HOLD_END
                 state.timer = 0.0
         elif state.phase == HOLD_END:
-            if state.timer >= self._pause:
+            if state.timer > self._pause:
                 state.phase = HOLD_START
                 state.offset = 0.0
                 state.timer = 0.0
