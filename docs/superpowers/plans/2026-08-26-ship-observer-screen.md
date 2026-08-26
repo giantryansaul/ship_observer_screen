@@ -298,7 +298,7 @@ class Vessel:
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `pytest tests/test_models.py -v`
-Expected: PASS (12 tests)
+Expected: PASS (11 tests)
 
 - [ ] **Step 7: Commit**
 
