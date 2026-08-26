@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
+import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -67,6 +69,22 @@ _VISIT_COLUMNS = (
     "last_lat", "last_lon", "max_sog", "last_cog", "last_heading", "nav_status",
     "position_count", "static_resolved", "displayed", "raw_static", "raw_position",
 )
+
+
+_WINDOW_RE = re.compile(r"^(\d+)([smhd])$")
+_WINDOW_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+LEVEL_ORDER = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}
+
+
+def parse_window(raw: str) -> int:
+    """Parse `7d`, `48h`, `30m`, `90s` into seconds."""
+    match = _WINDOW_RE.match((raw or "").strip().lower())
+    if match is None:
+        raise ValueError(
+            f"window must look like 7d, 48h, 30m or 90s; got {raw!r}"
+        )
+    return int(match.group(1)) * _WINDOW_UNITS[match.group(2)]
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -193,3 +211,124 @@ class Storage:
             (datetime.now(timezone.utc).isoformat(), level, category, message,
              _json(detail)),
         )
+
+    async def prune(self, ship_log_days: int, event_log_hours: int) -> tuple[int, int]:
+        """Delete rows past their retention window. Returns (ships, events)."""
+        now = datetime.now(timezone.utc)
+        ship_cutoff = (now - timedelta(days=ship_log_days)).isoformat()
+        event_cutoff = (now - timedelta(hours=event_log_hours)).isoformat()
+
+        ships = await self._execute(
+            "DELETE FROM ship_log WHERE entered_at < ?", (ship_cutoff,))
+        ships_deleted = ships.rowcount or 0
+        events = await self._execute(
+            "DELETE FROM event_log WHERE ts < ?", (event_cutoff,))
+        events_deleted = events.rowcount or 0
+
+        if ships_deleted or events_deleted:
+            await self._execute("PRAGMA incremental_vacuum")
+        return ships_deleted, events_deleted
+
+    async def query_ships(self, since: datetime | None = None,
+                          until: datetime | None = None,
+                          category: str | None = None,
+                          limit: int = 200) -> list[dict[str, Any]]:
+        clauses, params = [], []
+        if since is not None:
+            clauses.append("entered_at >= ?")
+            params.append(since.isoformat())
+        if until is not None:
+            clauses.append("entered_at <= ?")
+            params.append(until.isoformat())
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(int(limit), 5000)))
+        return await self._fetchall(
+            f"SELECT * FROM ship_log {where} ORDER BY entered_at DESC LIMIT ?",
+            tuple(params),
+        )
+
+    async def query_events(self, since: datetime | None = None,
+                           level: str | None = None,
+                           category: str | None = None,
+                           limit: int = 200) -> list[dict[str, Any]]:
+        clauses, params = [], []
+        if since is not None:
+            clauses.append("ts >= ?")
+            params.append(since.isoformat())
+        if level:
+            # `level` is a minimum severity, not an exact match.
+            minimum = LEVEL_ORDER.get(level.upper())
+            if minimum is not None:
+                allowed = [name for name, rank in LEVEL_ORDER.items()
+                           if rank >= minimum]
+                clauses.append(f"level IN ({','.join('?' * len(allowed))})")
+                params.extend(allowed)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(int(limit), 5000)))
+        return await self._fetchall(
+            f"SELECT * FROM event_log {where} ORDER BY ts DESC LIMIT ?",
+            tuple(params),
+        )
+
+    async def traffic_summary(self, window_seconds: int) -> dict[str, Any]:
+        """Aggregates for tuning MIN_LENGTH_METERS and EXCLUDE_CATEGORIES."""
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(seconds=window_seconds)).isoformat()
+
+        total = await self._fetchall(
+            "SELECT COUNT(*) AS n FROM ship_log WHERE entered_at >= ?", (cutoff,))
+        by_category = await self._fetchall(
+            "SELECT category, COUNT(*) AS visits, "
+            "       SUM(displayed) AS displayed_visits "
+            "FROM ship_log WHERE entered_at >= ? "
+            "GROUP BY category ORDER BY visits DESC", (cutoff,))
+        histogram = await self._fetchall(
+            "SELECT CAST(length_m / 10 AS INTEGER) * 10 AS bucket_m, "
+            "       COUNT(*) AS visits "
+            "FROM ship_log WHERE entered_at >= ? AND length_m IS NOT NULL "
+            "GROUP BY bucket_m ORDER BY bucket_m", (cutoff,))
+        by_hour = await self._fetchall(
+            "SELECT CAST(strftime('%H', entered_at) AS INTEGER) AS hour, "
+            "       COUNT(*) AS visits "
+            "FROM ship_log WHERE entered_at >= ? "
+            "GROUP BY hour ORDER BY hour", (cutoff,))
+        unresolved = await self._fetchall(
+            "SELECT COUNT(*) AS n FROM ship_log "
+            "WHERE entered_at >= ? AND static_resolved = 0", (cutoff,))
+
+        # Median and p90 dwell are computed in Python: SQLite has no percentile.
+        dwell_rows = await self._fetchall(
+            "SELECT category, "
+            "       (julianday(COALESCE(departed_at, last_seen)) "
+            "        - julianday(entered_at)) * 1440.0 AS minutes "
+            "FROM ship_log WHERE entered_at >= ?", (cutoff,))
+        grouped: dict[str, list[float]] = {}
+        for row in dwell_rows:
+            if row["minutes"] is not None:
+                grouped.setdefault(row["category"], []).append(float(row["minutes"]))
+        dwell_by_category = []
+        for category, values in sorted(grouped.items()):
+            values.sort()
+            index = min(len(values) - 1, int(len(values) * 0.9))
+            dwell_by_category.append({
+                "category": category,
+                "visits": len(values),
+                "median_minutes": round(statistics.median(values), 1),
+                "p90_minutes": round(values[index], 1),
+            })
+
+        return {
+            "window_seconds": window_seconds,
+            "total_visits": total[0]["n"],
+            "by_category": by_category,
+            "length_histogram": histogram,
+            "visits_by_hour": by_hour,
+            "dwell_by_category": dwell_by_category,
+            "unresolved_static_visits": unresolved[0]["n"],
+        }
