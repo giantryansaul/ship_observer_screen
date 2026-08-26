@@ -361,9 +361,41 @@ def test_classify_out_of_range_is_other(code):
     assert classify(code) is ShipCategory.OTHER
 
 
-def test_every_code_0_to_99_classifies():
+# Written independently of the implementation so it catches a shifted range or a
+# dropped exact-code entry, not just a type error.
+EXPECTED_BY_CODE = {
+    **{c: ShipCategory.OTHER for c in range(0, 30)},
+    30: ShipCategory.FISHING,
+    31: ShipCategory.TUG,
+    32: ShipCategory.TUG,
+    33: ShipCategory.OTHER,
+    34: ShipCategory.OTHER,
+    35: ShipCategory.MILITARY,
+    36: ShipCategory.SAILING,
+    37: ShipCategory.PLEASURE,
+    **{c: ShipCategory.OTHER for c in range(38, 51)},   # includes 50, pilot
+    51: ShipCategory.PATROL,
+    52: ShipCategory.TUG,
+    53: ShipCategory.OTHER,
+    54: ShipCategory.OTHER,
+    55: ShipCategory.PATROL,
+    **{c: ShipCategory.OTHER for c in range(56, 60)},
+    **{c: ShipCategory.PASSENGER for c in range(60, 70)},
+    **{c: ShipCategory.CARGO for c in range(70, 80)},
+    **{c: ShipCategory.TANKER for c in range(80, 90)},
+    **{c: ShipCategory.OTHER for c in range(90, 100)},
+}
+
+
+def test_every_code_0_to_99_maps_to_its_expected_category():
+    assert len(EXPECTED_BY_CODE) == 100, "the expectation table must cover 0-99"
+    assert {code: classify(code) for code in range(100)} == EXPECTED_BY_CODE
+
+
+def test_every_code_0_to_99_lands_on_a_valid_tier():
+    """Spec 13: every code maps to a category *and a tier*."""
     for code in range(100):
-        assert isinstance(classify(code), ShipCategory)
+        assert priority_for(classify(code)) in {10, 20, 30, 40}
 
 
 def test_tier_ordering_matches_spec():
