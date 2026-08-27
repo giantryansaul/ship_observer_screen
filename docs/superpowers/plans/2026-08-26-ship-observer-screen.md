@@ -6168,7 +6168,6 @@ import argparse
 import asyncio
 import json
 import logging
-from collections import Counter
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from pathlib import Path
