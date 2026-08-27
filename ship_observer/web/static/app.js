@@ -113,13 +113,31 @@ async function refreshTraffic() {
 async function refreshEvents() {
   const level = document.getElementById("level").value;
   const data = await (await fetch(`/api/events?limit=100&level=${level}`)).json();
-  document.getElementById("event-log").innerHTML = data.events
-    .map((e) => `<div class="event ${e.level}">
-        <span class="ts">${e.ts.slice(11, 19)}</span>
-        <span class="lvl">${e.level}</span>
-        <span class="cat">${e.category}</span>
-        <span class="msg">${e.message}</span></div>`)
-    .join("");
+  const log = document.getElementById("event-log");
+  log.innerHTML = "";
+  // event.message can embed AIS-broadcast ship-name text (e.g. "entered:
+  // <name>") - AIS is an open, unauthenticated protocol, so that string is
+  // attacker-controlled. Build nodes with textContent, exactly like
+  // renderLive() already does for vessel names, never innerHTML with
+  // interpolated event fields.
+  for (const e of data.events) {
+    const row = document.createElement("div");
+    row.className = `event ${e.level}`;
+    const ts = document.createElement("span");
+    ts.className = "ts";
+    ts.textContent = e.ts.slice(11, 19);
+    const lvl = document.createElement("span");
+    lvl.className = "lvl";
+    lvl.textContent = e.level;
+    const cat = document.createElement("span");
+    cat.className = "cat";
+    cat.textContent = e.category;
+    const msg = document.createElement("span");
+    msg.className = "msg";
+    msg.textContent = e.message;
+    row.append(ts, lvl, cat, msg);
+    log.appendChild(row);
+  }
 }
 
 function connect() {
