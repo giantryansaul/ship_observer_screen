@@ -75,6 +75,19 @@ async def test_query_ships_filters_and_orders_newest_first(store):
     assert len(await store.query_ships(limit=1)) == 1
 
 
+async def test_query_ships_honors_until_and_unknown_category(store):
+    await add_visit(store, 1, NOW - timedelta(hours=5), category=ShipCategory.CARGO)
+    await add_visit(store, 2, NOW - timedelta(hours=3), category=ShipCategory.TANKER)
+    await add_visit(store, 3, NOW - timedelta(hours=1), category=ShipCategory.CARGO)
+
+    # "until" bounds by entered_at and still returns newest-first.
+    rows = await store.query_ships(until=NOW - timedelta(hours=2))
+    assert [r["mmsi"] for r in rows] == [2, 1]
+
+    # Unknown category is an exact-match filter and returns no rows.
+    assert await store.query_ships(category="not-a-real-category") == []
+
+
 async def test_query_events_filters_by_level_and_category(store):
     await store.log_event("INFO", "ws", "connected")
     await store.log_event("WARN", "ws", "dropped")
@@ -94,6 +107,19 @@ async def test_query_events_level_filter_is_a_minimum_severity(store):
     await store.log_event("ERROR", "ws", "e")
     messages = {r["message"] for r in await store.query_events(level="INFO")}
     assert messages == {"i", "e"}
+
+
+async def test_query_events_unknown_level_is_ignored_but_category_still_filters(store):
+    await store.log_event("INFO", "ws", "connected")
+    await store.log_event("WARN", "ws", "dropped")
+    await store.log_event("ERROR", "display", "render failed")
+
+    # Unknown levels are ignored (same as no level filter).
+    rows = await store.query_events(level="NOPE")
+    assert [r["message"] for r in rows] == ["render failed", "dropped", "connected"]
+
+    # Unknown categories remain exact-match filters and return no rows.
+    assert await store.query_events(category="not-a-real-category") == []
 
 
 async def test_traffic_summary_counts_by_category(store):

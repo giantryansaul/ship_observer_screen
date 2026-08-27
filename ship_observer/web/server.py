@@ -15,7 +15,7 @@ from ..config import Settings
 from ..models import Vessel
 from ..registry import VesselRegistry
 from ..render.layout import capacity
-from ..selection import Slots, is_eligible, select_slots
+from ..selection import Slots, filtered_reason, is_eligible, select_slots
 from ..storage import Storage, parse_window
 
 log = logging.getLogger(__name__)
@@ -43,15 +43,7 @@ class AppState:
         default_factory=lambda: datetime.now(timezone.utc))
 
     def filtered_reason(self, vessel: Vessel) -> str | None:
-        s = self.settings
-        if not vessel.static_resolved:
-            return None
-        if vessel.category in s.exclude_categories:
-            return f"excluded_category:{vessel.category.value}"
-        if s.min_length_meters > 0 and (
-                vessel.length_m is None or vessel.length_m < s.min_length_meters):
-            return f"min_length:{s.min_length_meters}m"
-        return None
+        return filtered_reason(vessel, self.settings)
 
     def vessel_json(self, vessel: Vessel, slot: int | None) -> dict[str, Any]:
         return {
@@ -131,8 +123,10 @@ def _since(request: web.Request) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise ValueError(
+            f"since must be an ISO-8601 datetime, got {raw!r}"
+        ) from exc
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
@@ -169,10 +163,11 @@ async def _ships(request: web.Request) -> web.Response:
     state: AppState = request.app[STATE_KEY]
     try:
         limit = _limit(request)
+        since = _since(request)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     rows = await state.storage.query_ships(
-        since=_since(request),
+        since=since,
         category=request.query.get("category"),
         limit=limit,
     )
@@ -183,10 +178,11 @@ async def _events(request: web.Request) -> web.Response:
     state: AppState = request.app[STATE_KEY]
     try:
         limit = _limit(request)
+        since = _since(request)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     rows = await state.storage.query_events(
-        since=_since(request),
+        since=since,
         level=request.query.get("level"),
         category=request.query.get("category"),
         limit=limit,

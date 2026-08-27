@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from ship_observer.config import Settings
 from ship_observer.models import ShipCategory, Vessel
-from ship_observer.selection import is_eligible, select_slots
+from ship_observer.selection import filtered_reason, is_eligible, select_slots
 
 T0 = datetime(2026, 8, 26, 17, 0, 0, tzinfo=timezone.utc)
 MINIMAL = {"AIS_STREAM_API_KEY": "k",
@@ -79,6 +79,24 @@ def test_exclude_categories_gate():
     s = settings(EXCLUDE_CATEGORIES="fishing,sailing")
     assert is_eligible(vessel(1, 0, ShipCategory.FISHING, 10, 18.0), s) is False
     assert is_eligible(vessel(2, 0, ShipCategory.CARGO, 30), s) is True
+
+
+def test_filtered_reason_matches_hard_gates():
+    s = settings(MIN_LENGTH_METERS="50", EXCLUDE_CATEGORIES="fishing")
+
+    unresolved = vessel(1, 0, ShipCategory.UNKNOWN, 20, length=None, resolved=False)
+    too_short = vessel(2, 0, ShipCategory.CARGO, 30, length=11.0, resolved=True)
+    excluded = vessel(3, 0, ShipCategory.FISHING, 10, length=99.0, resolved=True)
+    allowed = vessel(4, 0, ShipCategory.CARGO, 30, length=120.0, resolved=True)
+
+    assert filtered_reason(unresolved, s) is None
+    assert filtered_reason(too_short, s) == "min_length:50.0m"
+    assert filtered_reason(excluded, s) == "excluded_category:fishing"
+    assert filtered_reason(allowed, s) is None
+    assert is_eligible(unresolved, s) is True
+    assert is_eligible(too_short, s) is False
+    assert is_eligible(excluded, s) is False
+    assert is_eligible(allowed, s) is True
 
 
 def test_filtered_vessels_do_not_occupy_slots():

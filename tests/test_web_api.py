@@ -119,6 +119,12 @@ async def test_ships_endpoint_rejects_a_non_numeric_limit(client):
     assert "limit" in (await response.json())["error"]
 
 
+async def test_ships_endpoint_rejects_a_malformed_since_timestamp(client):
+    response = await client.get("/api/ships?since=not-a-datetime")
+    assert response.status == 400
+    assert "since" in (await response.json())["error"]
+
+
 async def test_events_endpoint(client):
     await client.app_state.storage.log_event("WARN", "ws", "dropped", {"n": 1})
     body = await (await client.get("/api/events?level=WARN")).json()
@@ -130,6 +136,12 @@ async def test_events_endpoint_rejects_a_non_numeric_limit(client):
     response = await client.get("/api/events?limit=xyz")
     assert response.status == 400
     assert "limit" in (await response.json())["error"]
+
+
+async def test_events_endpoint_rejects_a_malformed_since_timestamp(client):
+    response = await client.get("/api/events?since=still-not-a-datetime")
+    assert response.status == 400
+    assert "since" in (await response.json())["error"]
 
 
 async def test_traffic_summary_endpoint(client):

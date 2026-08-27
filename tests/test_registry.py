@@ -84,6 +84,42 @@ def test_second_static_message_does_not_report_resolved_again():
     assert r.apply(static(1, T0 + timedelta(minutes=6))).static_resolved_now is False
 
 
+def test_partial_static_retransmission_preserves_existing_resolved_fields():
+    r = VesselRegistry(settings())
+    r.apply(position(1, T0, name="EVER GIVEN"))
+
+    original = static(1, T0 + timedelta(seconds=10))
+    vessel = r.apply(original).vessel
+    assert vessel.category is ShipCategory.TANKER
+    assert vessel.priority == 30
+    assert vessel.imo == 9312345
+    assert vessel.length_m == pytest.approx(240.0)
+    assert vessel.beam_m == pytest.approx(32.0)
+    assert vessel.draught_m == pytest.approx(12.5)
+    assert vessel.eta == "08-27 06:30"
+
+    partial = AisMessage(
+        message_type="ShipStaticData",
+        mmsi=1,
+        received_at=T0 + timedelta(seconds=20),
+        meta_name="SHOULD NOT OVERRIDE",
+        lat=IN_BOX[0],
+        lon=IN_BOX[1],
+        payload={"Name": "UPDATED NAME ONLY"},
+    )
+    updated = r.apply(partial).vessel
+
+    # Name can update, but absent static fields must never regress.
+    assert updated.name == "UPDATED NAME ONLY"
+    assert updated.category is ShipCategory.TANKER
+    assert updated.priority == 30
+    assert updated.imo == 9312345
+    assert updated.length_m == pytest.approx(240.0)
+    assert updated.beam_m == pytest.approx(32.0)
+    assert updated.draught_m == pytest.approx(12.5)
+    assert updated.eta == "08-27 06:30"
+
+
 def test_position_tracking_accumulates():
     r = VesselRegistry(settings())
     r.apply(position(1, T0, sog=8.0))

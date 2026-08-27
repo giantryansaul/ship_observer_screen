@@ -17,20 +17,25 @@ class Slots:
         return len(self.live) + len(self.history)
 
 
+def filtered_reason(vessel: Vessel, settings: Settings) -> str | None:
+    """Return why a vessel is filtered, or None if eligible."""
+    if not vessel.static_resolved:
+        return None
+    if vessel.category in settings.exclude_categories:
+        return f"excluded_category:{vessel.category.value}"
+    if settings.min_length_meters > 0:
+        if vessel.length_m is None or vessel.length_m < settings.min_length_meters:
+            return f"min_length:{settings.min_length_meters}m"
+    return None
+
+
 def is_eligible(vessel: Vessel, settings: Settings) -> bool:
     """Hard display gates. The log is never filtered - only the panel is.
 
     A vessel whose ShipStaticData has not arrived is always eligible: static
     data can take six minutes, and gating on it would hide real traffic.
     """
-    if not vessel.static_resolved:
-        return True
-    if vessel.category in settings.exclude_categories:
-        return False
-    if settings.min_length_meters > 0:
-        if vessel.length_m is None or vessel.length_m < settings.min_length_meters:
-            return False
-    return True
+    return filtered_reason(vessel, settings) is None
 
 
 def _select(vessels: list[Vessel], settings: Settings, limit: int) -> list[Vessel]:
