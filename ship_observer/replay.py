@@ -4,9 +4,8 @@ import argparse
 import asyncio
 import json
 import logging
-from collections import Counter
 from collections.abc import AsyncIterator, Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,6 +16,13 @@ from .drivers.null import NullDriver
 from .service import Service
 
 log = logging.getLogger(__name__)
+
+
+def _ensure_utc(value: datetime) -> datetime:
+    """Recorded sessions should already be UTC-aware, but normalize
+    defensively - the same reasoning as `_since`/`_until` in the web layer.
+    """
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def read_session(path: Path) -> Iterator[AisMessage]:
@@ -31,7 +37,7 @@ def read_session(path: Path) -> Iterator[AisMessage]:
                 yield AisMessage(
                     message_type=row["message_type"],
                     mmsi=int(row["mmsi"]),
-                    received_at=datetime.fromisoformat(row["received_at"]),
+                    received_at=_ensure_utc(datetime.fromisoformat(row["received_at"])),
                     meta_name=row.get("meta_name"),
                     lat=row.get("lat"),
                     lon=row.get("lon"),

@@ -130,6 +130,19 @@ def _since(request: web.Request) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _until(request: web.Request) -> datetime | None:
+    raw = request.query.get("until")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"until must be an ISO-8601 datetime, got {raw!r}"
+        ) from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 async def _index(request: web.Request) -> web.FileResponse:
     return web.FileResponse(STATIC_DIR / "index.html")
 
@@ -164,10 +177,12 @@ async def _ships(request: web.Request) -> web.Response:
     try:
         limit = _limit(request)
         since = _since(request)
+        until = _until(request)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     rows = await state.storage.query_ships(
         since=since,
+        until=until,
         category=request.query.get("category"),
         limit=limit,
     )

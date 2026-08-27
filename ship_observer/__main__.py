@@ -24,6 +24,11 @@ async def _run() -> int:
         level=getattr(logging, settings.log_level, logging.INFO),
         format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
     )
+    # `websockets` logs full frame payloads at DEBUG - including the
+    # subscription frame that carries the raw API key. Root-level DEBUG
+    # must never propagate into it; INFO is the floor regardless of what
+    # LOG_LEVEL the operator sets for the app's own loggers.
+    logging.getLogger("websockets").setLevel(logging.INFO)
 
     service = Service(settings)
     task = asyncio.create_task(service.run())
@@ -36,6 +41,10 @@ async def _run() -> int:
         await task
     except asyncio.CancelledError:
         logging.getLogger(__name__).info("shutting down")
+        return 0
+    except Exception as exc:
+        logging.getLogger(__name__).error("service exited abnormally: %s", exc)
+        return 1
     return 0
 
 

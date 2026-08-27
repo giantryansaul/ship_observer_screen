@@ -203,6 +203,14 @@ class Service:
             now = time.monotonic()
             dt, last = now - last, now
 
+            # Refreshed here, not just on message arrival in ingest_loop:
+            # a legitimately-connected client on a quiet box (no messages
+            # for a while) must not be reported as disconnected, and a real
+            # disconnect must be visible even if no message ever arrives to
+            # notice it via ingest_loop.
+            self.state.connected = bool(getattr(self.client, "connected", False))
+            self.state.dropped_frames = getattr(self.client, "dropped_frames", 0)
+
             slots = select_slots(self.registry.live(), self.registry.departed(),
                                  self.settings, capacity(self.settings.panel_height))
             self.state.slots = slots
@@ -311,12 +319,14 @@ class Service:
             self.ingest_loop(), self.render_loop(),
             self.registry_prune_loop(), self.retention_loop(),
         )]
+        failed = False
         try:
             done, pending = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 if task.exception() is not None:
                     log.error("task failed", exc_info=task.exception())
+                    failed = True
         finally:
             for task in tasks:
                 task.cancel()
@@ -324,3 +334,7 @@ class Service:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
             await self.stop()
+
+        if failed:
+            raise RuntimeError(
+                "a supervised task failed; see the error above for details")

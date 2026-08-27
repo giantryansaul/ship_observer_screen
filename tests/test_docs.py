@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-DOC = Path("docs/raspberry-pi-setup.md")
+DOC = Path(__file__).parent.parent / "docs/raspberry-pi-setup.md"
 
 
 def test_the_runbook_exists():

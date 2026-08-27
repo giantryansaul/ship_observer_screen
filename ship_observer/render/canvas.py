@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Sequence
 
 RGB = tuple[int, int, int]
-BLACK: RGB = (0, 0, 0)
 
 
 @dataclass(frozen=True)

@@ -341,3 +341,53 @@ def _vessel(**overrides):
                 static_resolved=True)
     base.update(overrides)
     return Vessel(**base)
+
+
+async def test_render_loop_refreshes_connected_and_dropped_frames_without_a_message(tmp_path):
+    """AppState.connected/dropped_frames must track the client's live state
+    on every render tick, not only when a message happens to arrive via
+    ingest_loop - otherwise a connected-but-quiet box reports as
+    disconnected, and a real disconnect is invisible until a message
+    happens to arrive to notice it.
+    """
+    settings = Settings.from_env(env(tmp_path))
+    client = FakeClient([])
+    svc = Service(settings, driver=NullDriver(64, 64), client=client)
+    await svc.start()
+    try:
+        task = asyncio.create_task(svc.render_loop())
+        await asyncio.sleep(0.1)
+        assert svc.state.connected is True
+
+        # Simulate a disconnect entirely outside ingest_loop - no message
+        # is ever sent, only the client's own attributes change, exactly
+        # as the real AisClient's reconnect logic would do.
+        client.connected = False
+        client.dropped_frames = 3
+        await asyncio.sleep(0.1)
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert svc.state.connected is False, "must reflect the disconnect"
+        assert svc.state.dropped_frames == 3
+    finally:
+        await svc.stop()
+
+
+async def test_run_exits_nonzero_when_a_supervised_task_fails(tmp_path, monkeypatch):
+    """A crashed supervised task must make run() signal failure, not return
+    as if nothing happened - otherwise systemd sees a clean exit for what
+    was actually a crash.
+    """
+    settings = Settings.from_env(env(tmp_path))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+
+    async def boom():
+        raise RuntimeError("simulated crash")
+
+    monkeypatch.setattr(svc, "retention_loop", boom)
+
+    with pytest.raises(RuntimeError, match="supervised task failed"):
+        await svc.run()

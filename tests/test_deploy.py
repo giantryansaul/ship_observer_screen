@@ -2,7 +2,7 @@ import configparser
 import stat
 from pathlib import Path
 
-DEPLOY = Path("deploy")
+DEPLOY = Path(__file__).parent.parent / "deploy"
 
 
 def test_service_unit_exists_and_parses():

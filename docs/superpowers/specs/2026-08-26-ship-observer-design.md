@@ -142,7 +142,7 @@ error rather than crash-looping.
 | `MATRIX_COLS` | `64` | |
 | `MATRIX_CHAIN` | `1` | |
 | `MATRIX_PARALLEL` | `1` | |
-| `MATRIX_BRIGHTNESS` | `60` | 0-100. |
+| `MATRIX_BRIGHTNESS` | `60` | 1-100. |
 | `MATRIX_GPIO_SLOWDOWN` | `4` | 4 suits Pi 4; 2 for Pi 3. |
 | `MATRIX_HARDWARE_MAPPING` | `adafruit-hat-pwm` | |
 | `HTTP_HOST` | `0.0.0.0` | |

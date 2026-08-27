@@ -1,6 +1,7 @@
 import base64
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -123,6 +124,29 @@ async def test_ships_endpoint_rejects_a_malformed_since_timestamp(client):
     response = await client.get("/api/ships?since=not-a-datetime")
     assert response.status == 400
     assert "since" in (await response.json())["error"]
+
+
+async def test_ships_endpoint_honors_until(client):
+    await client.app_state.storage.begin_visit(
+        vessel(1, entered_at=T0 - timedelta(hours=5), last_seen=T0 - timedelta(hours=5)))
+    await client.app_state.storage.begin_visit(
+        vessel(2, entered_at=T0 - timedelta(hours=3), last_seen=T0 - timedelta(hours=3)))
+    await client.app_state.storage.begin_visit(
+        vessel(3, entered_at=T0 - timedelta(hours=1), last_seen=T0 - timedelta(hours=1)))
+
+    until = (T0 - timedelta(hours=2)).isoformat()
+    # `+` is unreserved in a query string but decodes to a literal space by
+    # convention (RFC 3986 sec 3.4 vs. form-urlencoding) - the isoformat()
+    # UTC offset must be percent-encoded or the server sees a malformed
+    # timestamp instead of the intended one.
+    body = await (await client.get(f"/api/ships?until={quote(until, safe='')}")).json()
+    assert [s["mmsi"] for s in body["ships"]] == [2, 1]
+
+
+async def test_ships_endpoint_rejects_a_malformed_until_timestamp(client):
+    response = await client.get("/api/ships?until=not-a-datetime")
+    assert response.status == 400
+    assert "until" in (await response.json())["error"]
 
 
 async def test_events_endpoint(client):
