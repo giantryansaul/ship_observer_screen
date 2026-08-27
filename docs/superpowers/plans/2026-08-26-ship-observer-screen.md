@@ -5346,6 +5346,8 @@ import pytest
 from ship_observer.ais_client import AisMessage
 from ship_observer.config import Settings
 from ship_observer.drivers.null import NullDriver
+from ship_observer.models import ShipCategory
+from ship_observer.selection import is_eligible
 from ship_observer.service import Service
 from ship_observer.storage import Storage
 
@@ -5464,6 +5466,54 @@ async def test_render_loop_marks_displayed_vessels(service):
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert vessel.displayed is True
+
+
+async def test_render_loop_displayed_flag_is_sticky_after_becoming_ineligible(tmp_path):
+    """Documented, intentional behavior (spec Section 9's "Known edge case"):
+    `displayed` answers "was this vessel ever rendered on the panel", not
+    "does it match its final resolved classification". An unresolved vessel
+    is always eligible (real static data can take ~6 minutes), so it can win
+    a slot and be marked displayed=True before its data reveals it should
+    actually be filtered - and that flag is never reset once static data
+    resolves it into ineligibility. This pins that contract so a future
+    change to is_eligible or the displayed-write logic doesn't silently
+    alter documented behavior with nothing failing.
+    """
+    settings = Settings.from_env(env(tmp_path, MIN_LENGTH_METERS="50"))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+    await svc.start()
+    try:
+        vessel = _vessel(category=ShipCategory.UNKNOWN, priority=20,
+                         static_resolved=False, length_m=None)
+        svc.state.registry._live[1] = vessel
+        vessel.log_id = await svc.storage.begin_visit(vessel)
+
+        task = asyncio.create_task(svc.render_loop())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert vessel.displayed is True, "unresolved vessels are always eligible"
+
+        # Static data now reveals it's too small to keep - it must become
+        # ineligible immediately, but `displayed` must NOT be reset.
+        vessel.static_resolved = True
+        vessel.category = ShipCategory.FISHING
+        vessel.length_m = 8.0
+        assert is_eligible(vessel, settings) is False, "now correctly filtered"
+
+        task2 = asyncio.create_task(svc.render_loop())
+        await asyncio.sleep(0.1)
+        task2.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task2
+
+        assert vessel not in svc.state.slots.live, "removed from the panel"
+        assert vessel.displayed is True, (
+            "displayed is sticky by design - it means 'ever shown', not "
+            "'matches final classification' (spec Section 9)")
+    finally:
+        await svc.stop()
 
 
 async def test_registry_prune_loop_closes_visits(tmp_path):
@@ -6404,7 +6454,6 @@ def envelope(mmsi, message_type="PositionReport", time_utc=None, **payload):
 
 ```python
 import asyncio
-import json
 
 import pytest
 
@@ -6432,15 +6481,23 @@ def env(tmp_path, **overrides):
 async def run_service(settings, server, seconds=0.3):
     service = Service(settings, driver=NullDriver(settings.panel_width,
                                                   settings.panel_height))
-    await service.start()
+    # Assigned before start() so Service.start()'s own
+    # `if self.client is None: self.client = AisClient(...)` never runs -
+    # otherwise a real AisClient bound to the live websockets.connect would
+    # be built and immediately discarded in this hermetic test.
     service.client = AisClient(settings, on_event=service.record_event,
                                connect=server.connect,
                                backoff_base=0.01, backoff_max=0.01)
+    await service.start()
     ingest = asyncio.create_task(service.ingest_loop())
     render = asyncio.create_task(service.render_loop())
     await asyncio.sleep(seconds)
     ingest.cancel()
     render.cancel()
+    # Awaited (not just cancelled) so a task that raised something other than
+    # CancelledError surfaces as a test failure instead of an unretrieved-
+    # task warning.
+    await asyncio.gather(ingest, render, return_exceptions=True)
     return service
 
 
@@ -6463,6 +6520,7 @@ async def test_full_pipeline_from_websocket_to_frame(tmp_path):
         assert rows[0]["name"] == "EVER GIVEN"
         assert rows[0]["category"] == "cargo"
         assert rows[0]["length_m"] == pytest.approx(400.0)
+        assert rows[0]["max_sog"] == pytest.approx(12.0), "position data must merge too"
         assert rows[0]["displayed"] == 1
 
         assert service.driver.frames
@@ -6508,19 +6566,54 @@ async def test_small_craft_is_logged_but_kept_off_the_panel(tmp_path):
 
 
 async def test_priority_selection_gives_slots_to_the_big_ships(tmp_path):
-    frames = []
-    for mmsi in (10, 11, 12):    # three sailboats
-        frames.append(envelope(mmsi, Sog=5.0))
-        frames.append(envelope(mmsi, "ShipStaticData", **SAIL_STATIC))
-    frames.append(envelope(20, Sog=14.0))   # then a cargo ship
-    frames.append(envelope(20, "ShipStaticData", **CARGO_STATIC))
+    """The cargo ship enters FIRST (oldest of all four) and the three
+    sailboats enter progressively LATER (all newer than it) - a real,
+    non-tied chronological order, not the coincidental full-timestamp-tie
+    the original version of this test had (every envelope shared one
+    default time_utc, so the "proof" only held by accident of Python's
+    stable sort over equal keys).
+
+    Under pure recency the 3 most-recent entrants would be the 3 sailboats,
+    evicting the cargo ship entirely - confirmed separately below. Under
+    priority selection (the default, and what this test exercises), the
+    cargo ship survives DESPITE being the single oldest entrant, correctly
+    evicting the oldest sailboat instead. That contrast is the actual proof
+    that priority - not recency - decided the outcome.
+    """
+    T0 = "2026-08-26 17:00:00.000000000 +0000 UTC"
+    T1 = "2026-08-26 17:01:00.000000000 +0000 UTC"
+    T2 = "2026-08-26 17:02:00.000000000 +0000 UTC"
+    T3 = "2026-08-26 17:03:00.000000000 +0000 UTC"
+    frames = [
+        envelope(20, Sog=14.0, time_utc=T0),
+        envelope(20, "ShipStaticData", time_utc=T0, **CARGO_STATIC),
+    ]
+    for mmsi, t in ((10, T1), (11, T2), (12, T3)):
+        frames.append(envelope(mmsi, Sog=5.0, time_utc=t))
+        frames.append(envelope(mmsi, "ShipStaticData", time_utc=t, **SAIL_STATIC))
 
     settings = Settings.from_env(env(tmp_path))
     service = await run_service(settings, FakeAisStream(frames))
     try:
         assert len(service.registry.live()) == 4
-        assert 20 in {v.mmsi for v in service.state.slots.live}, (
-            "the cargo ship must hold a slot despite entering last")
+        live_mmsis = {v.mmsi for v in service.state.slots.live}
+        assert 20 in live_mmsis, (
+            "the cargo ship must hold a slot despite being the oldest entrant")
+        assert len(live_mmsis) == 3, "only MAX_SHIPS=3 slots exist"
+
+        # Confirm the contrast is real: pure recency would have excluded the
+        # cargo ship entirely, since it is chronologically the oldest of all
+        # four vessels.
+        from ship_observer.selection import select_slots
+        from ship_observer.render.layout import capacity
+        recency_settings = Settings.from_env(
+            env(tmp_path, PRIORITY_SELECTION="false"))
+        recency_slots = select_slots(service.registry.live(), [],
+                                     recency_settings, capacity(64))
+        assert 20 not in {v.mmsi for v in recency_slots.live}, (
+            "pure recency must exclude the oldest entrant, proving priority "
+            "- not recency - is what saved the cargo ship above")
+
         rows = await service.storage._fetchall(
             "SELECT mmsi FROM ship_log ORDER BY mmsi")
         assert [r["mmsi"] for r in rows] == [10, 11, 12, 20], "all four logged"
