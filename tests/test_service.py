@@ -7,6 +7,8 @@ import pytest
 from ship_observer.ais_client import AisMessage
 from ship_observer.config import Settings
 from ship_observer.drivers.null import NullDriver
+from ship_observer.models import ShipCategory
+from ship_observer.selection import is_eligible
 from ship_observer.service import Service
 from ship_observer.storage import Storage
 
@@ -125,6 +127,54 @@ async def test_render_loop_marks_displayed_vessels(service):
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert vessel.displayed is True
+
+
+async def test_render_loop_displayed_flag_is_sticky_after_becoming_ineligible(tmp_path):
+    """Documented, intentional behavior (spec Section 9's "Known edge case"):
+    `displayed` answers "was this vessel ever rendered on the panel", not
+    "does it match its final resolved classification". An unresolved vessel
+    is always eligible (real static data can take ~6 minutes), so it can win
+    a slot and be marked displayed=True before its data reveals it should
+    actually be filtered - and that flag is never reset once static data
+    resolves it into ineligibility. This pins that contract so a future
+    change to is_eligible or the displayed-write logic doesn't silently
+    alter documented behavior with nothing failing.
+    """
+    settings = Settings.from_env(env(tmp_path, MIN_LENGTH_METERS="50"))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+    await svc.start()
+    try:
+        vessel = _vessel(category=ShipCategory.UNKNOWN, priority=20,
+                         static_resolved=False, length_m=None)
+        svc.state.registry._live[1] = vessel
+        vessel.log_id = await svc.storage.begin_visit(vessel)
+
+        task = asyncio.create_task(svc.render_loop())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert vessel.displayed is True, "unresolved vessels are always eligible"
+
+        # Static data now reveals it's too small to keep - it must become
+        # ineligible immediately, but `displayed` must NOT be reset.
+        vessel.static_resolved = True
+        vessel.category = ShipCategory.FISHING
+        vessel.length_m = 8.0
+        assert is_eligible(vessel, settings) is False, "now correctly filtered"
+
+        task2 = asyncio.create_task(svc.render_loop())
+        await asyncio.sleep(0.1)
+        task2.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task2
+
+        assert vessel not in svc.state.slots.live, "removed from the panel"
+        assert vessel.displayed is True, (
+            "displayed is sticky by design - it means 'ever shown', not "
+            "'matches final classification' (spec Section 9)")
+    finally:
+        await svc.stop()
 
 
 async def test_registry_prune_loop_closes_visits(tmp_path):
