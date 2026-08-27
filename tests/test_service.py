@@ -384,6 +384,14 @@ async def test_run_exits_nonzero_when_a_supervised_task_fails(tmp_path, monkeypa
     settings = Settings.from_env(env(tmp_path))
     svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
 
+    async def noop():
+        pass
+
+    # Never binds a real port - serve_web() is replaced with a no-op, the
+    # same technique test_run_cleans_up_and_reraises_if_startup_fails uses
+    # above, just succeeding instead of raising.
+    monkeypatch.setattr(svc, "serve_web", noop)
+
     async def boom():
         raise RuntimeError("simulated crash")
 
