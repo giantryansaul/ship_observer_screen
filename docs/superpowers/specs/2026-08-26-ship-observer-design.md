@@ -425,10 +425,18 @@ briefly win a slot before its static data arrives; if that data later reveals a
 vessel that should be filtered (e.g. `MIN_LENGTH_METERS`), it is correctly removed
 from the panel from that point on, but `displayed` stays `True` — it records
 "was ever rendered," not "matches the vessel's final resolved classification."
-This is a rare edge case (it needs an otherwise-quiet box for a small vessel to
-win a slot at all) and is consistent with the field's documented meaning below,
-but it can slightly skew the traffic summary toward over-counting displayed
-small craft. Revisit only if real tuning data shows this matters in practice.
+**This is the common path, not a rare one, in exactly the deployment where
+`displayed` is used as a tuning instrument.** Once `MIN_LENGTH_METERS` excludes
+resolved small craft from eligibility entirely, the only vessels competing for
+`MAX_SHIPS` slots are resolved large ones - so whenever fewer than `MAX_SHIPS` of
+those are in the box (the normal state, since that scarcity is *why* the operator
+set the filter), every entering small craft wins a slot for its full unresolved
+window (up to ~6 minutes) and is recorded as `displayed=1`. In a filtered
+deployment this pushes `SUM(displayed)` toward the full visit count for filtered
+categories - the exact shape an operator is likely to misread as "my filter isn't
+working." If this needs fixing, the right shape is a separate counter gated on
+`is_eligible()`'s final, fully-resolved verdict, not a change to what `displayed`
+itself means.
 
 `displayed` and `static_resolved` exist specifically to answer tuning questions:
 what got shown, and how often static data never arrived.
