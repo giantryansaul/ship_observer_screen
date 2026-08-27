@@ -420,6 +420,16 @@ CREATE INDEX idx_ship_log_mmsi    ON ship_log(mmsi, entered_at);
 CREATE INDEX idx_ship_log_cat     ON ship_log(category, entered_at);
 ```
 
+**Known edge case:** an unresolved vessel is always eligible (Section 7.2) and can
+briefly win a slot before its static data arrives; if that data later reveals a
+vessel that should be filtered (e.g. `MIN_LENGTH_METERS`), it is correctly removed
+from the panel from that point on, but `displayed` stays `True` — it records
+"was ever rendered," not "matches the vessel's final resolved classification."
+This is a rare edge case (it needs an otherwise-quiet box for a small vessel to
+win a slot at all) and is consistent with the field's documented meaning below,
+but it can slightly skew the traffic summary toward over-counting displayed
+small craft. Revisit only if real tuning data shows this matters in practice.
+
 `displayed` and `static_resolved` exist specifically to answer tuning questions:
 what got shown, and how often static data never arrived.
 

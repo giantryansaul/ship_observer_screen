@@ -6516,7 +6516,7 @@ async def test_priority_selection_gives_slots_to_the_big_ships(tmp_path):
     frames.append(envelope(20, "ShipStaticData", **CARGO_STATIC))
 
     settings = Settings.from_env(env(tmp_path))
-    service = await run_service(FakeAisStream(frames), settings)
+    service = await run_service(settings, FakeAisStream(frames))
     try:
         assert len(service.registry.live()) == 4
         assert 20 in {v.mmsi for v in service.state.slots.live}, (
