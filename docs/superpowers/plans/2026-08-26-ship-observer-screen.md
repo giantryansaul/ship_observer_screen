@@ -5338,6 +5338,7 @@ The five concurrent tasks, signal handling, and the storage-write policy that ke
 
 ```python
 import asyncio
+import contextlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -5346,6 +5347,7 @@ from ship_observer.ais_client import AisMessage
 from ship_observer.config import Settings
 from ship_observer.drivers.null import NullDriver
 from ship_observer.service import Service
+from ship_observer.storage import Storage
 
 T0 = datetime(2026, 8, 26, 17, 0, 0, tzinfo=timezone.utc)
 IN_BOX = (47.88, -122.41)
@@ -5409,6 +5411,8 @@ async def test_ingest_opens_a_visit_row_on_entry(tmp_path):
         task = asyncio.create_task(svc.ingest_loop())
         await asyncio.sleep(0.1)
         task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
         rows = await svc.storage._fetchall("SELECT * FROM ship_log")
         assert len(rows) == 1
         assert rows[0]["mmsi"] == 1
@@ -5427,6 +5431,8 @@ async def test_static_data_updates_the_same_visit_row(tmp_path):
         task = asyncio.create_task(svc.ingest_loop())
         await asyncio.sleep(0.1)
         task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
         rows = await svc.storage._fetchall("SELECT * FROM ship_log")
         assert len(rows) == 1, "static data must not open a second visit"
         assert rows[0]["category"] == "cargo"
@@ -5441,6 +5447,8 @@ async def test_render_loop_produces_frames_and_publishes_them(service):
     task = asyncio.create_task(service.render_loop())
     await asyncio.sleep(0.25)
     task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
     assert service.driver.frames, "the driver must receive frames"
     assert service.state.latest_frame == service.driver.frames[-1]
     assert len(service.state.latest_frame) == 64 * 64 * 3
@@ -5453,6 +5461,8 @@ async def test_render_loop_marks_displayed_vessels(service):
     task = asyncio.create_task(service.render_loop())
     await asyncio.sleep(0.25)
     task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
     assert vessel.displayed is True
 
 
@@ -5497,6 +5507,8 @@ async def test_storage_failures_never_stop_the_service(service, monkeypatch):
     await asyncio.sleep(0.1)
     assert not task.done(), "ingest must survive a storage failure"
     task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 async def test_shutdown_closes_every_open_visit(tmp_path):
@@ -5515,6 +5527,98 @@ async def test_shutdown_closes_every_open_visit(tmp_path):
     await storage.close()
     assert row["depart_reason"] == "shutdown"
     assert row["departed_at"] is not None
+
+
+async def test_run_cleans_up_and_reraises_if_startup_fails(tmp_path, monkeypatch):
+    """A failure in start()/serve_web() must not leak the storage connection,
+    the raw-recording file, or a partially-set-up aiohttp runner.
+    """
+    settings = Settings.from_env(env(tmp_path))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+
+    async def boom():
+        raise OSError("port already in use")
+
+    monkeypatch.setattr(svc, "serve_web", boom)
+
+    with pytest.raises(OSError):
+        await svc.run()
+
+    assert svc.storage._conn is None, "storage must be closed on a failed startup"
+    assert svc.driver.closed is True, "the driver must be closed on a failed startup"
+
+
+async def test_stop_isolates_failures_between_cleanup_steps(tmp_path):
+    """One failing cleanup step (a hung websocket during runner.cleanup(),
+    say) must not skip the steps after it - driver.close() and
+    storage.close() must still run. Uses a fake runner rather than a real
+    aiohttp AppRunner/TCPSite so this test never binds an actual port.
+    """
+    settings = Settings.from_env(env(tmp_path))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+    await svc.start()
+
+    class BoomingRunner:
+        async def cleanup(self):
+            raise RuntimeError("runner cleanup hung")
+
+    svc._runner = BoomingRunner()
+
+    await svc.stop()  # must not raise
+
+    assert svc.driver.closed is True, "a failed runner cleanup must not skip driver.close()"
+    assert svc.storage._conn is None, "a failed runner cleanup must not skip storage.close()"
+
+
+async def test_stop_drains_in_flight_event_tasks(tmp_path):
+    """record_event()'s fire-and-forget task must be tracked and awaited by
+    stop(), not lost to garbage collection or left racing storage.close().
+    """
+    settings = Settings.from_env(env(tmp_path))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+    await svc.start()
+
+    svc.record_event("INFO", "test", "in-flight event")
+    assert svc._event_tasks, "record_event must track its fire-and-forget task"
+
+    await svc.stop()
+
+    assert all(t.done() for t in svc._event_tasks), (
+        "every event task must complete before stop() returns"
+    )
+    reopened = Storage(settings.db_path)
+    await reopened.open()
+    rows = await reopened._fetchall(
+        "SELECT message FROM event_log WHERE message = 'in-flight event'")
+    await reopened.close()
+    assert len(rows) == 1, "the event must actually be persisted, not dropped"
+
+
+async def test_render_error_dedup_survives_a_varying_message(service, monkeypatch):
+    """A message that embeds a varying value (e.g. a changing index) must
+    still collapse to one dedup key by (exception type, call-site line) -
+    not one key per distinct message, which would defeat the mechanism.
+    """
+    import ship_observer.service as service_module
+
+    calls = {"n": 0}
+
+    def flaky_render(*args, **kwargs):
+        calls["n"] += 1
+        raise IndexError(f"list index out of range: item {calls['n']}")
+
+    monkeypatch.setattr(service_module, "render_frame", flaky_render)
+
+    task = asyncio.create_task(service.render_loop())
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert calls["n"] > 1, "the flaky render must have been invoked more than once"
+    assert len(service._render_errors) == 1, (
+        "a varying message from the same call site must not defeat the dedup"
+    )
 
 
 def _vessel(**overrides):
@@ -5587,6 +5691,10 @@ class Service:
         self._raw_file = None
         self._last_visit_write: dict[int, float] = {}
         self._render_errors: set[str] = set()
+        # create_task()'s return value must be kept somewhere, or the task
+        # can be garbage-collected mid-execution - a documented asyncio
+        # footgun. Discarded via add_done_callback once it finishes.
+        self._event_tasks: set[asyncio.Task] = set()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -5608,13 +5716,37 @@ class Service:
         # Close every open visit so no ship_log row is left dangling.
         for vessel in self.registry.close_all():
             await self._safe(self.storage.end_visit(vessel, "shutdown"))
+            self._last_visit_write.pop(vessel.mmsi, None)
+
+        # Let in-flight fire-and-forget event writes finish before storage
+        # closes underneath them, rather than losing them or racing close().
+        if self._event_tasks:
+            await asyncio.gather(*self._event_tasks, return_exceptions=True)
+
+        # Each step is independently guarded: one failure (a hung websocket
+        # during runner cleanup, say) must not skip the rest - a skipped
+        # driver.close() leaves the panel lit with a stale frame, and a
+        # skipped storage.close() leaves SQLite open with an uncheckpointed
+        # WAL. Every guarantee below stop() depends on all of this running.
         if self._runner is not None:
-            await self._runner.cleanup()
+            try:
+                await self._runner.cleanup()
+            except Exception:
+                log.exception("error cleaning up the web runner")
         if self.driver is not None:
-            self.driver.close()
+            try:
+                self.driver.close()
+            except Exception:
+                log.exception("error closing the display driver")
         if self._raw_file is not None:
-            self._raw_file.close()
-        await self.storage.close()
+            try:
+                self._raw_file.close()
+            except Exception:
+                log.exception("error closing the raw recording file")
+        try:
+            await self.storage.close()
+        except Exception:
+            log.exception("error closing storage")
 
     def record_event(self, level: str, category: str, message: str,
                      detail: dict | None = None) -> None:
@@ -5626,8 +5758,10 @@ class Service:
         log.log(logging.getLevelName(level if level != "WARN" else "WARNING"),
                 "[%s] %s", category, message)
         try:
-            asyncio.get_running_loop().create_task(
+            task = asyncio.get_running_loop().create_task(
                 self._safe(self.storage.log_event(level, category, message, detail)))
+            self._event_tasks.add(task)
+            task.add_done_callback(self._event_tasks.discard)
         except RuntimeError:
             pass   # no loop yet: startup logging only
 
@@ -5672,11 +5806,16 @@ class Service:
             if change.departed:
                 await self._safe(self.storage.end_visit(vessel,
                                                         vessel.depart_reason or "left_bbox"))
+                self._last_visit_write.pop(vessel.mmsi, None)
                 self.record_event("INFO", "registry",
                                   f"departed: {vessel.display_name}",
                                   {"mmsi": vessel.mmsi,
                                    "reason": vessel.depart_reason})
-            elif change.static_resolved_now or self._should_write(vessel):
+            elif change.static_resolved_now or (
+                    not change.entered and self._should_write(vessel)):
+                # `not change.entered` avoids re-serializing the exact row
+                # begin_visit() just inserted - a wasted write on the SD
+                # card the throttle exists to protect.
                 await self._safe(self.storage.update_visit(vessel))
 
     async def _begin_visit(self, vessel: Vessel) -> int | None:
@@ -5718,20 +5857,27 @@ class Service:
 
             try:
                 render_frame(self.canvas, slots, self.scroller, dt, stale=stale)
+                frame = self.canvas.to_bytes()
+                self.state.latest_frame = frame
+                self.driver.show(frame)
             except Exception as exc:
-                # Log each unique failure once; a per-frame exception would
-                # otherwise flood the journal at RENDER_FPS.
-                key = f"{type(exc).__name__}: {exc}"
+                # Dedup by (exception type, the line in THIS function that
+                # raised it) rather than the full message: a message that
+                # embeds a varying value (an mmsi, a list index) would give
+                # every occurrence a distinct key, defeating the dedup and
+                # flooding the journal at RENDER_FPS - exactly what this
+                # mechanism exists to prevent. The traceback's outermost
+                # frame is always this try block's call site, which is
+                # exactly the granularity that's actually useful here.
+                tb = exc.__traceback__
+                key = f"{type(exc).__name__}@{tb.tb_lineno if tb else 0}"
                 if key not in self._render_errors:
                     self._render_errors.add(key)
                     log.exception("render failed")
-                    self.record_event("ERROR", "display", f"render failed: {key}")
+                    self.record_event("ERROR", "display",
+                                      f"render failed: {type(exc).__name__}: {exc}")
                 await asyncio.sleep(interval)
                 continue
-
-            frame = self.canvas.to_bytes()
-            self.state.latest_frame = frame
-            self.driver.show(frame)
 
             for vessel in slots.live:
                 if not vessel.displayed:
@@ -5786,8 +5932,18 @@ class Service:
                            "port": self.settings.http_port})
 
     async def run(self) -> None:
-        await self.start()
-        await self.serve_web()
+        try:
+            await self.start()
+            await self.serve_web()
+        except Exception:
+            # A startup failure (e.g. the HTTP port already in use) must
+            # still release whatever was already acquired - the storage
+            # connection opened in start(), an opened raw-recording file,
+            # a partially-set-up aiohttp runner - rather than leaking it.
+            log.exception("service failed to start")
+            await self.stop()
+            raise
+
         self.record_event("INFO", "config", "service started",
                           {"bbox": self.settings.bbox.to_aisstream()})
         tasks = [asyncio.create_task(coro) for coro in (
