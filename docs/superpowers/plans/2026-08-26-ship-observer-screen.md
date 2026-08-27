@@ -5935,11 +5935,14 @@ class Service:
         try:
             await self.start()
             await self.serve_web()
-        except Exception:
-            # A startup failure (e.g. the HTTP port already in use) must
-            # still release whatever was already acquired - the storage
-            # connection opened in start(), an opened raw-recording file,
-            # a partially-set-up aiohttp runner - rather than leaking it.
+        except BaseException:
+            # BaseException, not Exception: asyncio.CancelledError is a
+            # BaseException, and a SIGINT/SIGTERM landing mid-startup (e.g.
+            # Ctrl-C right after launching on a Pi) must still release
+            # whatever was already acquired - the storage connection opened
+            # in start(), an opened raw-recording file, a partially-set-up
+            # aiohttp runner - rather than leaking it. Always re-raised
+            # unconditionally below, so nothing is silently swallowed.
             log.exception("service failed to start")
             await self.stop()
             raise
