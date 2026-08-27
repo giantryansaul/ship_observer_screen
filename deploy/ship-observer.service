@@ -1,0 +1,23 @@
+[Unit]
+Description=Ship Observer AIS display
+Documentation=file:///opt/ship-observer/docs/raspberry-pi-setup.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The HUB75 library needs direct GPIO and /dev/mem access, which requires root.
+# See docs/raspberry-pi-setup.md for the unprivileged alternative.
+User=root
+WorkingDirectory=/opt/ship-observer
+EnvironmentFile=/opt/ship-observer/.env
+ExecStart=/opt/ship-observer/venv/bin/python -m ship_observer
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ship-observer
+
+[Install]
+WantedBy=multi-user.target
