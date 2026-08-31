@@ -93,6 +93,23 @@ def test_debug_js_polls_every_api_endpoint():
         assert endpoint in js
 
 
+def test_debug_js_throttles_the_vessel_table_to_once_per_second():
+    """The websocket pushes a state message at WEB_FPS (10/s by default), and
+    renderLive()/renderConfig() rebuild their tables via innerHTML - at that
+    rate any text selection is destroyed before a copy can complete. The
+    rebuild must be gated to roughly once a second, not called straight from
+    the websocket callback."""
+    js = (STATIC / "debug.js").read_text()
+    assert re.search(r"TABLE_REFRESH_MS\s*=\s*1000", js), (
+        "expected a 1000ms throttle constant")
+    on_state = re.search(r"onState:\s*\(state\)\s*=>\s*\{(.*?)\n\s*\},",
+                         js, re.S)
+    assert on_state, "debug.js must wire an onState handler"
+    assert "renderLive(state)" not in on_state.group(1), (
+        "renderLive must be called from behind the throttle, not directly "
+        "from the websocket callback")
+
+
 def test_debug_js_never_interpolates_event_fields_into_innerhtml():
     """event.message can carry AIS-broadcast ship-name text. AIS is an open,
     unauthenticated protocol, so that string is attacker-controlled - it must

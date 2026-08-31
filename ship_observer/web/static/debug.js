@@ -105,12 +105,42 @@ async function refreshEvents() {
   }
 }
 
+// The websocket pushes a state message at WEB_FPS (10/s by default), which
+// keeps the status line and the panel mirror smooth - but renderLive() and
+// renderConfig() rebuild their contents via innerHTML, and at that rate any
+// text selection inside them is destroyed before a copy can complete. Gate
+// those two rebuilds to roughly once a second, and skip the rebuild
+// entirely when nothing rendered actually changed, so a stable table never
+// interrupts a selection at all.
+const TABLE_REFRESH_MS = 1000;
+let lastTableRender = -Infinity;
+let lastTableSnapshot = "";
+
+function tableSnapshot(state) {
+  const vessels = [...state.live, ...state.history].map((v) => [
+    v.mmsi, v.slot, v.display_name, v.category, v.priority, v.length_m,
+    v.call_sign, v.destination, v.eligible, v.filtered_reason,
+    v.static_resolved, v.depart_reason,
+  ]);
+  return JSON.stringify({ vessels, config: state.config, capacity: state.capacity });
+}
+
+function refreshTableIfDue(state) {
+  const now = performance.now();
+  if (now - lastTableRender < TABLE_REFRESH_MS) return;
+  lastTableRender = now;
+  const snapshot = tableSnapshot(state);
+  if (snapshot === lastTableSnapshot) return;
+  lastTableSnapshot = snapshot;
+  renderLive(state);
+  renderConfig(state);
+}
+
 connectFrames({
   onFrame: (msg) => drawFrame(canvas, msg),
   onState: (state) => {
     renderStatus(statusEl, state);
-    renderLive(state);
-    renderConfig(state);
+    refreshTableIfDue(state);
   },
   onReconnecting: () => {
     statusEl.textContent = "reconnecting…";
