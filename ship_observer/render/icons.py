@@ -9,7 +9,8 @@ ICON_W = 8
 ICON_H = 8
 
 # '#' is the hull, drawn in the category colour. '*' is an accent, drawn
-# brighter. '.' is transparent.
+# brighter. 'R'/'G'/'B' are fixed extra colours (used for the cargo icon's
+# mixed container stack). '.' is transparent.
 CATEGORY_COLOR: dict[ShipCategory, RGB] = {
     ShipCategory.PASSENGER: (80, 200, 255),
     ShipCategory.CARGO: (255, 170, 60),
@@ -28,6 +29,12 @@ CATEGORY_COLOR: dict[ShipCategory, RGB] = {
 
 ACCENT: RGB = (255, 255, 255)
 
+# Container colours for the cargo icon - bright enough to read on the LED
+# matrix next to the orange hull.
+BOX_RED: RGB = (230, 70, 70)
+BOX_GREEN: RGB = (90, 210, 110)
+BOX_BLUE: RGB = (80, 140, 255)
+
 _ART: dict[ShipCategory, list[str]] = {
     ShipCategory.PASSENGER: [   # ferry: boxy superstructure on a wide hull
         "........",
@@ -39,15 +46,15 @@ _ART: dict[ShipCategory, list[str]] = {
         ".######.",
         "..####..",
     ],
-    ShipCategory.CARGO: [       # box boat: stacked containers
+    ShipCategory.CARGO: [       # tanker-style hull, mixed-colour containers
         "........",
-        "#.##.##.",
-        "########",
-        "#.##.##.",
+        ".RRBBGG.",
+        ".RRBBGG.",
         "########",
         "########",
         ".######.",
-        "..####..",
+        "........",
+        "........",
     ],
     ShipCategory.TANKER: [      # long low hull with a midships manifold
         "........",
@@ -59,24 +66,24 @@ _ART: dict[ShipCategory, list[str]] = {
         ".######.",
         "........",
     ],
-    ShipCategory.TUG: [         # short with a tall wheelhouse
-        "........",
-        "...##...",
-        "...##...",
-        "..####..",
+    ShipCategory.TUG: [         # masts, windowed pilothouse, portholed hull
+        "...#.#..",
+        "..#####.",
+        "..#*#*#.",
         ".######.",
         "########",
-        ".#####..",
+        "####*#*#",
+        ".######.",
         "........",
     ],
-    ShipCategory.FISHING: [     # trawler with net boom
-        "..#.....",
-        "..#..#..",
-        "..#..#..",
-        "..####..",
-        ".######.",
-        "########",
-        ".#####..",
+    ShipCategory.FISHING: [     # a fish, nose left, tail right
+        "........",
+        "...##...",
+        "..####.#",
+        ".#*####.",
+        "..####.#",
+        "...##...",
+        "........",
         "........",
     ],
     ShipCategory.SAILING: [     # triangular sail
@@ -89,33 +96,33 @@ _ART: dict[ShipCategory, list[str]] = {
         ".######.",
         "........",
     ],
-    ShipCategory.PLEASURE: [    # low powerboat with a windshield
+    ShipCategory.PLEASURE: [    # water skier: white head/rope/spray, towed left
         "........",
-        "........",
-        "....##..",
-        "...####.",
+        ".....**.",
+        "**#####.",
+        ".....##.",
+        "..#.##.*",
         "..######",
-        "########",
-        ".#####..",
+        "........",
         "........",
     ],
-    ShipCategory.PATROL: [      # light bar
-        "..*..*..",
-        "..####..",
-        "..#..#..",
+    ShipCategory.PATROL: [      # police badge: shield with a bright emblem
         ".######.",
-        "########",
-        "########",
-        ".#####..",
+        ".######.",
+        ".##**##.",
+        ".##**##.",
+        "..####..",
+        "...##...",
+        "........",
         "........",
     ],
-    ShipCategory.MILITARY: [    # mast and low profile
-        "....#...",
-        "....#...",
-        "..#.#...",
-        "..###...",
-        ".#####..",
-        "########",
+    ShipCategory.MILITARY: [    # anchor: ring, stock, shank, crown
+        "...**...",
+        "..####..",
+        "...##...",
+        "...##...",
+        "#..##..#",
+        "##.##.##",
         ".######.",
         "........",
     ],
@@ -145,5 +152,6 @@ _ART: dict[ShipCategory, list[str]] = {
 @functools.lru_cache(maxsize=None)
 def icon_for(category: ShipCategory) -> Bitmap:
     art = _ART[category]
-    palette = {"#": CATEGORY_COLOR[category], "*": ACCENT}
+    palette = {"#": CATEGORY_COLOR[category], "*": ACCENT,
+               "R": BOX_RED, "G": BOX_GREEN, "B": BOX_BLUE}
     return Bitmap.from_art(art, palette)

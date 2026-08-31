@@ -48,3 +48,11 @@ def test_every_icon_is_bright_enough_to_read_on_the_panel(category):
     r, g, b = CATEGORY_COLOR[category]
     assert max(r, g, b) >= 140, (
         f"{category.value} icon colour ({r}, {g}, {b}) is too dim to see")
+
+
+def test_cargo_icon_carries_multicolor_container_boxes():
+    """The cargo redesign is a tanker-style hull with cargo boxes on top in
+    different colors - so its palette must go beyond the single category
+    color plus white accent."""
+    colors = {p for p in icon_for(ShipCategory.CARGO).pixels if p is not None}
+    assert len(colors) >= 4, "expected hull plus at least three box colors"
