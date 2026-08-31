@@ -15,7 +15,8 @@ DIVIDER_H = 7
 
 ICON_X = 0
 TEXT_X = 10
-NAME_BOX_W = 64 - TEXT_X    # 54 px -> 13 characters
+LENGTH_COL_W = 16           # 4 chars -> up to "999m", right-aligned at x=64
+NAME_BOX_W = 64 - TEXT_X - LENGTH_COL_W    # 38 px -> 9 characters, scrolling
 LINE2_BOX_W = 64            # 16 characters
 
 NAME_Y_OFFSET = 1           # centres the 6 px text in the 8 px icon band
@@ -23,6 +24,7 @@ LINE2_Y_OFFSET = 9
 SEPARATOR_Y_OFFSET = 16
 
 NAME_COLOR: RGB = (255, 255, 255)
+LENGTH_COLOR: RGB = (170, 170, 170)
 CALLSIGN_COLOR: RGB = (90, 200, 210)
 DEST_COLOR: RGB = (255, 180, 60)
 SEPARATOR_COLOR: RGB = (40, 40, 40)
@@ -36,6 +38,14 @@ STALE_DIM = 0.5
 def capacity(panel_height: int) -> int:
     """How many ship blocks physically fit. Derived, never hard-coded."""
     return max(0, panel_height // BLOCK_H)
+
+
+def format_length(vessel: Vessel) -> str:
+    """Rounded length in meters, or '' when unknown. Never scrolls - it sits
+    right-aligned at the panel edge, outside the scrolling name box."""
+    if vessel.length_m is None:
+        return ""
+    return f"{round(vessel.length_m)}m"
 
 
 def format_line2(vessel: Vessel) -> str:
@@ -60,6 +70,11 @@ def _draw_block(canvas: Canvas, vessel: Vessel, y: int, scroller: Scroller,
     _draw_scrolling(canvas, (vessel.mmsi, "name"), vessel.display_name,
                     TEXT_X, y + NAME_Y_OFFSET, NAME_BOX_W, NAME_COLOR,
                     scroller, dt)
+
+    length_text = format_length(vessel)
+    if length_text:
+        length_x = canvas.width - text_width(length_text)
+        draw_text(canvas, length_text, length_x, y + NAME_Y_OFFSET, LENGTH_COLOR)
 
     line2 = format_line2(vessel)
     if line2:

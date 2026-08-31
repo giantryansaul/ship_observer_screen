@@ -13,7 +13,7 @@ def test_font_cell_dimensions_match_the_spec():
 def test_max_chars_for_a_64px_panel():
     """16 characters across is the constraint the whole layout is built on."""
     assert max_chars(64) == 16
-    assert max_chars(54) == 13   # the name field, indented past the icon
+    assert max_chars(54) == 13   # arbitrary example width, not tied to layout.py
     assert max_chars(3) == 0
 
 

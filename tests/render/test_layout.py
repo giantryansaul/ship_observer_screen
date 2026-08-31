@@ -4,10 +4,16 @@ import pytest
 
 from ship_observer.models import ShipCategory, Vessel
 from ship_observer.render.canvas import Canvas
+from ship_observer.render.font import FONT_H
 from ship_observer.render.layout import (
     BLOCK_H,
     DIVIDER_H,
+    LENGTH_COL_W,
+    NAME_BOX_W,
+    NAME_Y_OFFSET,
+    TEXT_X,
     capacity,
+    format_length,
     format_line2,
     render_frame,
 )
@@ -18,10 +24,15 @@ T0 = datetime(2026, 8, 26, 17, 0, 0, tzinfo=timezone.utc)
 
 
 def vessel(mmsi=1, name="EVER GIVEN", call_sign="H3RC", destination="SEATTLE",
-           category=ShipCategory.CARGO):
+           category=ShipCategory.CARGO, length_m=None):
     return Vessel(mmsi=mmsi, entered_at=T0, last_seen=T0, name=name,
                   call_sign=call_sign, destination=destination,
-                  category=category, static_resolved=True)
+                  category=category, length_m=length_m, static_resolved=True)
+
+
+def lit_cols(canvas, y0, y1, x0, x1):
+    return {x for y in range(y0, y1) for x in range(x0, x1)
+            if canvas.get_pixel(x, y) != (0, 0, 0)}
 
 
 def rows_with_content(canvas):
@@ -118,6 +129,41 @@ def test_stale_dims_the_whole_frame():
 def test_format_line2(call_sign, destination, expected):
     v = vessel(call_sign=call_sign, destination=destination)
     assert format_line2(v) == expected
+
+
+@pytest.mark.parametrize("length_m,expected", [
+    (400.0, "400m"),
+    (45.0, "45m"),
+    (44.6, "45m"),
+    (None, ""),
+])
+def test_format_length(length_m, expected):
+    v = vessel(length_m=length_m)
+    assert format_length(v) == expected
+
+
+def test_name_box_leaves_room_for_the_length_column():
+    """NAME_BOX_W must end before the length column starts, or a long
+    scrolling vessel name would pass directly under the length digits."""
+    assert TEXT_X + NAME_BOX_W <= 64 - LENGTH_COL_W
+
+
+def test_length_is_drawn_at_the_right_edge_of_the_name_row():
+    c = Canvas(64, 64)
+    v = vessel(name="EVER GIVEN", length_m=400.0)
+    render_frame(c, Slots(live=[v]), Scroller(), dt=0.0)
+    right_edge = lit_cols(c, NAME_Y_OFFSET, NAME_Y_OFFSET + FONT_H,
+                          64 - LENGTH_COL_W, 64)
+    assert right_edge, "expected length text in the reserved right column"
+
+
+def test_no_length_text_when_length_is_unknown():
+    c = Canvas(64, 64)
+    v = vessel(name="EVER GIVEN", length_m=None)
+    render_frame(c, Slots(live=[v]), Scroller(), dt=0.0)
+    right_edge = lit_cols(c, NAME_Y_OFFSET, NAME_Y_OFFSET + FONT_H,
+                          64 - LENGTH_COL_W, 64)
+    assert not right_edge, "no length text should render when length is unknown"
 
 
 def test_unnamed_vessel_falls_back_to_its_mmsi():
