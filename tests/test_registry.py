@@ -224,3 +224,41 @@ def test_message_with_no_coordinates_still_updates_last_seen():
     change = r.apply(static(1, T0 + timedelta(minutes=5)))
     assert change.departed is False
     assert change.vessel.last_seen == T0 + timedelta(minutes=5)
+
+
+def test_seed_static_resolves_a_vessel_from_a_cached_payload():
+    r = VesselRegistry(settings())
+    v = r.apply(position(1, T0)).vessel
+
+    seeded = r.seed_static(1, {"Type": 60, "Name": "SWIFTSURE",
+                               "CallSign": "WDF123"})
+
+    assert seeded is True
+    assert v.static_resolved is True
+    assert v.category is ShipCategory.PASSENGER
+    assert v.priority == 40
+    assert v.name == "SWIFTSURE"
+    assert v.call_sign == "WDF123"
+
+
+def test_seed_static_does_not_forge_a_live_raw_static_payload():
+    """raw_static means "what actually arrived this visit". A seeded visit
+    must stay distinguishable from one that resolved over the air."""
+    r = VesselRegistry(settings())
+    v = r.apply(position(1, T0)).vessel
+    r.seed_static(1, {"Type": 60})
+    assert v.raw_static is None
+
+
+def test_seed_static_never_overwrites_live_static_data():
+    r = VesselRegistry(settings())
+    r.apply(position(1, T0))
+    r.apply(static(1, T0, ship_type=80))
+
+    assert r.seed_static(1, {"Type": 60}) is False
+    assert r.live()[0].category is ShipCategory.TANKER
+
+
+def test_seed_static_is_a_noop_for_a_vessel_not_in_the_box():
+    r = VesselRegistry(settings())
+    assert r.seed_static(42, {"Type": 60}) is False

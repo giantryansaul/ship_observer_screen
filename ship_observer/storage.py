@@ -200,6 +200,25 @@ class Storage:
             vessel.departed_at = datetime.now(timezone.utc)
         await self.update_visit(vessel)
 
+    async def latest_static(self, mmsi: int) -> dict[str, Any] | None:
+        """The most recent visit's over-the-air static payload for a vessel.
+
+        Powers cross-visit seeding: only rows whose payload actually arrived
+        this-or-some visit count, so a seeded visit (raw_static NULL) can
+        never become the source for another seed.
+        """
+        rows = await self._fetchall(
+            "SELECT raw_static FROM ship_log "
+            "WHERE mmsi = ? AND static_resolved = 1 AND raw_static IS NOT NULL "
+            "ORDER BY entered_at DESC LIMIT 1", (mmsi,))
+        if not rows:
+            return None
+        try:
+            payload = json.loads(rows[0]["raw_static"])
+        except (TypeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
     async def log_event(self, level: str, category: str, message: str,
                         detail: dict[str, Any] | None = None) -> None:
         await self._execute(

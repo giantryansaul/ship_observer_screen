@@ -175,3 +175,24 @@ async def test_traffic_summary_on_empty_database_returns_zeros(store):
     assert summary["by_category"] == []
     assert summary["length_histogram"] == []
     assert summary["unresolved_static_visits"] == 0
+
+
+async def test_latest_static_returns_the_most_recent_resolved_payload(store):
+    old = await add_visit(store, 7, NOW - timedelta(days=2))
+    old.raw_static = {"Type": 60}
+    await store.update_visit(old)
+    new = await add_visit(store, 7, NOW - timedelta(hours=2))
+    new.raw_static = {"Type": 70}
+    await store.update_visit(new)
+
+    assert await store.latest_static(7) == {"Type": 70}
+
+
+async def test_latest_static_ignores_visits_without_a_real_payload(store):
+    # Unresolved visit: nothing to seed from.
+    await add_visit(store, 8, NOW - timedelta(hours=3), resolved=False)
+    # Resolved but the raw payload is gone (e.g. a seeded visit).
+    await add_visit(store, 8, NOW - timedelta(hours=1), resolved=True)
+
+    assert await store.latest_static(8) is None
+    assert await store.latest_static(999) is None

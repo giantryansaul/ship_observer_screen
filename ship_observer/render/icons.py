@@ -21,7 +21,9 @@ CATEGORY_COLOR: dict[ShipCategory, RGB] = {
     ShipCategory.PATROL: (255, 60, 60),
     ShipCategory.MILITARY: (150, 170, 190),
     ShipCategory.OTHER: (140, 140, 140),
-    ShipCategory.UNKNOWN: (90, 90, 90),
+    # Bright enough to read next to white name text: at (90, 90, 90) the
+    # weekend run's 64 unresolved vessels looked like they had no icon at all.
+    ShipCategory.UNKNOWN: (190, 190, 190),
 }
 
 ACCENT: RGB = (255, 255, 255)
@@ -128,11 +130,11 @@ _ART: dict[ShipCategory, list[str]] = {
         "........",
     ],
     ShipCategory.UNKNOWN: [     # generic hull with a question mark above
-        "..###...",
-        "....#...",
-        "...#....",
+        "..***...",
+        "....*...",
+        "...*....",
         "........",
-        "...#....",
+        "...*....",
         "########",
         ".######.",
         "........",

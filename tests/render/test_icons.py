@@ -38,3 +38,13 @@ def test_icons_are_visually_distinct():
 
 def test_icon_for_is_cached():
     assert icon_for(ShipCategory.CARGO) is icon_for(ShipCategory.CARGO)
+
+
+@pytest.mark.parametrize("category", list(ShipCategory))
+def test_every_icon_is_bright_enough_to_read_on_the_panel(category):
+    """A dim icon reads as a missing icon on the LED matrix. The first weekend
+    run displayed 64 unresolved vessels whose (90, 90, 90) UNKNOWN icon was
+    invisible next to the white name text."""
+    r, g, b = CATEGORY_COLOR[category]
+    assert max(r, g, b) >= 140, (
+        f"{category.value} icon colour ({r}, {g}, {b}) is too dim to see")

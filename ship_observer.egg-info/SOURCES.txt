@@ -1,8 +1,0 @@
-pyproject.toml
-ship_observer/__init__.py
-ship_observer.egg-info/PKG-INFO
-ship_observer.egg-info/SOURCES.txt
-ship_observer.egg-info/dependency_links.txt
-ship_observer.egg-info/requires.txt
-ship_observer.egg-info/top_level.txt
-tests/test_models.py

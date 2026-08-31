@@ -75,7 +75,7 @@ class VesselRegistry:
             self._apply_position(vessel, msg)
         elif msg.message_type == SHIP_STATIC_DATA:
             static_resolved_now = not vessel.static_resolved
-            self._apply_static(vessel, msg)
+            self._apply_static(vessel, msg.payload)
 
         # A position outside the box means the vessel has left; do not wait
         # out SHIP_TIMEOUT_SECONDS.
@@ -107,8 +107,23 @@ class VesselRegistry:
         vessel.nav_status = status if isinstance(status, int) else None
         vessel.raw_position = dict(p)
 
-    def _apply_static(self, vessel: Vessel, msg: AisMessage) -> None:
-        p = msg.payload
+    def seed_static(self, mmsi: int, payload: dict[str, Any]) -> bool:
+        """Resolve a live vessel from a previous visit's static payload.
+
+        Ship type, call sign and dimensions do not change between visits, so
+        cached data is as good as a live message - except raw_static, which is
+        cleared so a seeded visit stays distinguishable in the log from one
+        that resolved over the air. Live static data always wins: a vessel
+        that has already resolved is never touched.
+        """
+        vessel = self._live.get(mmsi)
+        if vessel is None or vessel.static_resolved:
+            return False
+        self._apply_static(vessel, payload)
+        vessel.raw_static = None
+        return True
+
+    def _apply_static(self, vessel: Vessel, p: dict[str, Any]) -> None:
         vessel.name = _clean(p.get("Name")) or vessel.name
         vessel.call_sign = _clean(p.get("CallSign")) or vessel.call_sign
         vessel.destination = _clean(p.get("Destination")) or vessel.destination
