@@ -92,3 +92,25 @@ async def test_replay_never_touches_the_network(tmp_path, monkeypatch):
         "DISPLAY_DRIVER": "null",
     })
     await replay(path, settings, speed=0.0)
+
+
+async def test_replay_splits_visits_separated_by_the_ship_timeout(tmp_path):
+    """The weekend log has vessels with up to 12 separate visits. Without
+    message-time pruning a replay merges them into one endless visit, so the
+    replayed stats can never match what the live pipeline recorded."""
+    path = write_session(tmp_path / "s.jsonl", [
+        record(1, 0),
+        record(1, 30),
+        record(2, 3600),   # arrives long after mmsi 1 went silent
+        record(1, 3660),   # mmsi 1 returns: a new visit, not a continuation
+    ])
+    settings = Settings.from_env({
+        "AIS_STREAM_API_KEY": "k",
+        "BBOX": "-122.527428,47.859476,-122.323322,47.910359",
+        "DB_PATH": str(tmp_path / "replay.db"),
+        "DISPLAY_DRIVER": "null",
+    })
+
+    result = await replay(path, settings, speed=0.0)
+
+    assert result["visits"] == 3

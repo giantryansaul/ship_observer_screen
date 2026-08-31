@@ -153,6 +153,13 @@ class Service:
                 }) + "\n")
                 self._raw_file.flush()
 
+            # Prune by stream time, not wall time, and before applying the
+            # message: a vessel returning after SHIP_TIMEOUT_SECONDS must
+            # close its old visit first or the two merge into one. This is
+            # also what lets a recorded session replay with the same visit
+            # boundaries the live run produced.
+            await self.prune_once(now=message.received_at)
+
             change = self.registry.apply(message)
             vessel = change.vessel
 
@@ -161,6 +168,8 @@ class Service:
                 self.record_event("INFO", "registry",
                                   f"entered: {vessel.display_name}",
                                   {"mmsi": vessel.mmsi})
+                if not vessel.static_resolved:
+                    await self._seed_static(vessel)
             if change.departed:
                 await self._safe(self.storage.end_visit(vessel,
                                                         vessel.depart_reason or "left_bbox"))
@@ -175,6 +184,26 @@ class Service:
                 # begin_visit() just inserted - a wasted write on the SD
                 # card the throttle exists to protect.
                 await self._safe(self.storage.update_visit(vessel))
+
+    async def _seed_static(self, vessel: Vessel) -> None:
+        """Resolve a fresh visit from the vessel's last resolved visit.
+
+        AISStream's static delivery is patchy - 64 of the first weekend's 165
+        visits never received ShipStaticData, including regulars that had
+        resolved it on an earlier pass - so a new visit starts from what a
+        previous one already learned rather than showing UNKNOWN again.
+        """
+        try:
+            payload = await self.storage.latest_static(vessel.mmsi)
+        except Exception:
+            log.exception("static-cache lookup failed for %s", vessel.mmsi)
+            return
+        if payload and self.registry.seed_static(vessel.mmsi, payload):
+            await self._safe(self.storage.update_visit(vessel))
+            self.record_event("INFO", "registry",
+                              f"static seeded from a previous visit: "
+                              f"{vessel.display_name}",
+                              {"mmsi": vessel.mmsi})
 
     async def _begin_visit(self, vessel: Vessel) -> int | None:
         try:
@@ -257,8 +286,8 @@ class Service:
 
             await asyncio.sleep(max(0.0, interval - (time.monotonic() - now)))
 
-    async def prune_once(self) -> None:
-        for vessel in self.registry.prune():
+    async def prune_once(self, now: datetime | None = None) -> None:
+        for vessel in self.registry.prune(now):
             await self._safe(self.storage.end_visit(vessel, "timeout"))
             self._last_visit_write.pop(vessel.mmsi, None)
             self.record_event("INFO", "registry",

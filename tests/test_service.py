@@ -399,3 +399,44 @@ async def test_run_exits_nonzero_when_a_supervised_task_fails(tmp_path, monkeypa
 
     with pytest.raises(RuntimeError, match="supervised task failed"):
         await svc.run()
+
+
+async def test_entry_seeds_static_from_a_previous_resolved_visit(tmp_path):
+    """SWIFTSURE resolved static in only 4 of its 12 weekend visits; the other
+    8 sat on the panel with the UNKNOWN icon. Ship type and call sign do not
+    change between Friday and Sunday, so seed them from the last resolved
+    visit instead of waiting for AISStream to deliver static data again."""
+    settings = Settings.from_env(env(tmp_path))
+
+    first = Service(settings, driver=NullDriver(64, 64),
+                    client=FakeClient([position(1, T0),
+                                       static(1, T0 + timedelta(seconds=30))]))
+    await first.start()
+    task = asyncio.create_task(first.ingest_loop())
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    await first.stop()
+
+    second = Service(settings, driver=NullDriver(64, 64),
+                     client=FakeClient([position(1, T0 + timedelta(hours=6))]))
+    await second.start()
+    try:
+        task = asyncio.create_task(second.ingest_loop())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        vessel = second.registry.live()[0]
+        assert vessel.static_resolved is True
+        assert vessel.category is ShipCategory.CARGO
+
+        rows = await second.storage._fetchall("SELECT * FROM ship_log ORDER BY id")
+        assert len(rows) == 2
+        assert rows[-1]["static_resolved"] == 1
+        assert rows[-1]["ship_type"] == 70
+        assert rows[-1]["raw_static"] is None  # seeded, not received this visit
+    finally:
+        await second.stop()
