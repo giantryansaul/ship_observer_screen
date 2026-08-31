@@ -1,0 +1,15 @@
+{
+  "messages": 602,
+  "visits": 165,
+  "by_category": {
+    "cargo": 25,
+    "fishing": 3,
+    "other": 25,
+    "passenger": 23,
+    "patrol": 2,
+    "pleasure": 1,
+    "tanker": 1,
+    "tug": 44,
+    "unknown": 41
+  }
+}
