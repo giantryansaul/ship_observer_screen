@@ -20,11 +20,19 @@ function renderLive(state) {
       v.length_m === null ? "—" : Math.round(v.length_m) + "m",
       v.call_sign || "—", v.destination || "—", status,
     ];
-    for (const value of cells) {
+    const DESTINATION_CELL = 7;
+    cells.forEach((value, i) => {
       const td = document.createElement("td");
       td.textContent = value;
+      // Raw destinations can be a US/GUID code (USCG AIS Encoding Guide
+      // v.25, e.g. US^0TEM>016S) that the server already resolved to a
+      // plain-English place; show that as a native tooltip rather than a
+      // new column, since most destinations don't have one.
+      if (i === DESTINATION_CELL && v.destination_resolved) {
+        td.title = v.destination_resolved;
+      }
       tr.appendChild(td);
-    }
+    });
     body.appendChild(tr);
   }
 }

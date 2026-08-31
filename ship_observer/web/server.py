@@ -17,6 +17,7 @@ from ..registry import VesselRegistry
 from ..render.layout import capacity
 from ..selection import Slots, filtered_reason, is_eligible, select_slots
 from ..storage import Storage, parse_window
+from ..uscg_locations import resolve_destination
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,15 @@ class AppState:
     def filtered_reason(self, vessel: Vessel) -> str | None:
         return filtered_reason(vessel, self.settings)
 
+    def _resolved_destination(self, vessel: Vessel) -> str | None:
+        """Plain-English place name for a US/GUID destination code (USCG AIS
+        Encoding Guide v.25), or None when the raw destination doesn't
+        resolve - the raw text is shown as-is either way."""
+        if not vessel.destination:
+            return None
+        resolved = resolve_destination(vessel.destination)
+        return resolved.detail if resolved is not None else None
+
     def vessel_json(self, vessel: Vessel, slot: int | None) -> dict[str, Any]:
         return {
             "mmsi": vessel.mmsi,
@@ -52,6 +62,7 @@ class AppState:
             "display_name": vessel.display_name,
             "call_sign": vessel.call_sign,
             "destination": vessel.destination,
+            "destination_resolved": self._resolved_destination(vessel),
             "ship_type": vessel.ship_type,
             "category": vessel.category.value,
             "priority": vessel.priority,

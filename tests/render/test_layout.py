@@ -131,6 +131,25 @@ def test_format_line2(call_sign, destination, expected):
     assert format_line2(v) == expected
 
 
+def test_format_line2_resolves_a_us_guid_destination(monkeypatch):
+    """US^0TEM>016S-style raw AIS text is unreadable on the panel; when it
+    resolves to a real place, show that instead of the raw code."""
+    import ship_observer.render.layout as layout_module
+    from ship_observer.uscg_locations import GuidPlace
+
+    monkeypatch.setattr(
+        "ship_observer.uscg_locations._table",
+        lambda: {"0TEM": GuidPlace("Guemes Channel WA", "")},
+    )
+    v = vessel(call_sign="WDM6586", destination="US^0TEM")
+    assert format_line2(v) == "WDM6586 > GUEMES CHANNEL WA"
+
+
+def test_format_line2_falls_back_to_raw_text_when_unresolvable():
+    v = vessel(call_sign="H3RC", destination="XX XXX>?? ???")
+    assert format_line2(v) == "H3RC > XX XXX>?? ???"
+
+
 @pytest.mark.parametrize("length_m,expected", [
     (400.0, "400m"),
     (45.0, "45m"),

@@ -45,6 +45,7 @@ th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var
 th { color: var(--muted); font-weight: normal; }
 tr.filtered td { color: var(--muted); text-decoration: line-through; }
 tr.past td { opacity: 0.6; font-style: italic; }
+td[title] { text-decoration: underline dotted var(--muted); text-underline-offset: 2px; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .event { display: grid; grid-template-columns: 4rem 3.5rem 5rem 1fr;
          gap: 0.5rem; font-size: 0.78rem; padding: 0.15rem 0;

@@ -4,6 +4,7 @@ from typing import Hashable
 
 from ..models import Vessel
 from ..selection import Slots
+from ..uscg_locations import resolve_destination
 from .canvas import RGB, Canvas
 from .font import draw_text, text_width
 from .icons import icon_for
@@ -49,9 +50,18 @@ def format_length(vessel: Vessel) -> str:
 
 
 def format_line2(vessel: Vessel) -> str:
-    """`CALLSIGN > DESTINATION`, degrading gracefully when either is missing."""
+    """`CALLSIGN > DESTINATION`, degrading gracefully when either is missing.
+
+    A raw US^XXXX destination code (USCG AIS Encoding Guide v.25) is
+    unreadable on the panel; resolve it to a place name where we can.
+    """
     call_sign = vessel.call_sign or ""
-    destination = f"> {vessel.destination}" if vessel.destination else ""
+    dest_text = vessel.destination
+    if dest_text:
+        resolved = resolve_destination(dest_text)
+        if resolved is not None:
+            dest_text = resolved.panel_text
+    destination = f"> {dest_text}" if dest_text else ""
     return " ".join(part for part in (call_sign, destination) if part)
 
 

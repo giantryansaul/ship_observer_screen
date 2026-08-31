@@ -110,6 +110,14 @@ def test_debug_js_throttles_the_vessel_table_to_once_per_second():
         "from the websocket callback")
 
 
+def test_debug_js_shows_resolved_destinations_as_a_tooltip():
+    """A raw US^0TEM>016S destination is unreadable; the server resolves it
+    to destination_resolved (a plain-English place name) - debug.js must
+    surface that, not just the raw code."""
+    js = (STATIC / "debug.js").read_text()
+    assert "destination_resolved" in js
+
+
 def test_debug_js_never_interpolates_event_fields_into_innerhtml():
     """event.message can carry AIS-broadcast ship-name text. AIS is an open,
     unauthenticated protocol, so that string is attacker-controlled - it must

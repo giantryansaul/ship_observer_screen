@@ -100,6 +100,28 @@ async def test_state_lists_live_vessels_with_slot_assignment(client):
     assert all("slot" in v and "eligible" in v for v in body["live"])
 
 
+async def test_state_resolves_a_us_guid_destination_for_the_debug_page(client, monkeypatch):
+    from ship_observer.uscg_locations import GuidPlace
+    monkeypatch.setattr(
+        "ship_observer.uscg_locations._table",
+        lambda: {"0TEM": GuidPlace("Guemes Channel WA", "Dakota Creek Industries East Pier.")},
+    )
+    registry = client.app_state.registry
+    registry._live[1] = vessel(1, destination="US^0TEM")
+    body = await (await client.get("/api/state")).json()
+    v = next(v for v in body["live"] if v["mmsi"] == 1)
+    assert v["destination"] == "US^0TEM", "raw destination must stay unchanged"
+    assert v["destination_resolved"] == "Guemes Channel WA (Dakota Creek Industries East Pier.)"
+
+
+async def test_state_omits_the_resolved_destination_when_unresolvable(client):
+    registry = client.app_state.registry
+    registry._live[1] = vessel(1, destination="SEATTLE")
+    body = await (await client.get("/api/state")).json()
+    v = next(v for v in body["live"] if v["mmsi"] == 1)
+    assert v["destination_resolved"] is None
+
+
 async def test_state_marks_filtered_vessels_so_exclusions_are_explicable(client, tmp_path):
     settings = Settings.from_env({**MINIMAL, "MIN_LENGTH_METERS": "50",
                                   "DB_PATH": str(tmp_path / "u.db")})

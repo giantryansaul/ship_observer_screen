@@ -20,7 +20,7 @@ build-backend = "setuptools.build_meta"
 include = ["ship_observer*"]
 
 [tool.setuptools.package-data]
-ship_observer = ["render/fonts/*.bdf", "web/static/*"]
+ship_observer = ["render/fonts/*.bdf", "web/static/*", "data/*.gz"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
