@@ -13,12 +13,12 @@ def _rule_body(css: str, selector: str) -> str:
 
 
 def test_all_static_files_exist():
-    for name in ("index.html", "debug.html", "common.js", "panel.js",
-                "debug.js", "style.css"):
+    for name in ("index.html", "debug.html", "panel.html", "common.js",
+                "panel.js", "debug.js", "panel-audit.js", "style.css"):
         assert (STATIC / name).is_file(), f"{name} is missing"
 
 
-@pytest.mark.parametrize("name", ["index.html", "debug.html"])
+@pytest.mark.parametrize("name", ["index.html", "debug.html", "panel.html"])
 def test_html_references_local_assets_only(name):
     """The Pi serves this over the LAN; it must work from a cold cache."""
     html = (STATIC / name).read_text()
@@ -116,6 +116,19 @@ def test_debug_js_shows_resolved_destinations_as_a_tooltip():
     surface that, not just the raw code."""
     js = (STATIC / "debug.js").read_text()
     assert "destination_resolved" in js
+
+
+def test_panel_html_has_a_button_for_each_audit_view():
+    html = (STATIC / "panel.html").read_text()
+    for view in ("chars", "icons", "ships"):
+        assert f'data-view="{view}"' in html, f"missing a button for {view!r}"
+    assert 'id="panel"' in html
+
+
+def test_panel_audit_js_fetches_the_audit_api_and_draws_with_the_shared_renderer():
+    js = (STATIC / "panel-audit.js").read_text()
+    assert "/api/panel-audit" in js
+    assert "drawFrame" in js
 
 
 def test_debug_js_never_interpolates_event_fields_into_innerhtml():

@@ -64,6 +64,54 @@ async def test_debug_serves_the_full_debug_page(client):
     assert "traffic-summary" in body
 
 
+async def test_panel_serves_the_audit_page(client):
+    response = await client.get("/panel")
+    assert response.status == 200
+    assert "text/html" in response.headers["Content-Type"]
+    body = (await response.text()).lower()
+    assert "canvas" in body
+    assert "chars" in body and "icons" in body and "ships" in body
+
+
+@pytest.mark.parametrize("view", ["chars", "icons", "ships"])
+async def test_panel_audit_api_renders_each_view(client, view):
+    response = await client.get(f"/api/panel-audit?view={view}")
+    assert response.status == 200
+    body = await response.json()
+    assert body["width"] == client.app_state.settings.panel_width
+    assert body["height"] == client.app_state.settings.panel_height
+    assert body["rgb"], "expected a non-empty base64 frame"
+
+
+async def test_panel_audit_api_includes_the_category_legend_for_icons(client):
+    """The HTML legend must come from the same source as the icon colors,
+    not a hand-copied duplicate that can drift."""
+    from ship_observer.models import ShipCategory
+    from ship_observer.render.icons import CATEGORY_COLOR
+
+    response = await client.get("/api/panel-audit?view=icons")
+    body = await response.json()
+    assert [c["name"] for c in body["categories"]] == [c.value for c in ShipCategory]
+    fishing = next(c for c in body["categories"] if c["name"] == "fishing")
+    assert tuple(fishing["color"]) == CATEGORY_COLOR[ShipCategory.FISHING]
+
+
+async def test_panel_audit_api_omits_the_legend_for_other_views(client):
+    response = await client.get("/api/panel-audit?view=chars")
+    body = await response.json()
+    assert "categories" not in body
+
+
+async def test_panel_audit_api_rejects_an_unknown_view(client):
+    response = await client.get("/api/panel-audit?view=bogus")
+    assert response.status == 400
+
+
+async def test_panel_audit_api_requires_a_view(client):
+    response = await client.get("/api/panel-audit")
+    assert response.status == 400
+
+
 async def test_healthz_reports_liveness_and_message_age(client):
     client.app_state.last_message_at = datetime.now(timezone.utc) - timedelta(seconds=5)
     client.app_state.connected = True

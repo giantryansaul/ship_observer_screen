@@ -12,9 +12,13 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from ..config import Settings
-from ..models import Vessel
+from ..models import ShipCategory, Vessel
 from ..registry import VesselRegistry
-from ..render.layout import capacity
+from ..render.audit import dummy_slots, render_font_audit, render_icon_audit
+from ..render.canvas import Canvas
+from ..render.icons import CATEGORY_COLOR
+from ..render.layout import capacity, render_frame
+from ..render.scroll import Scroller
 from ..selection import Slots, filtered_reason, is_eligible, select_slots
 from ..storage import Storage, parse_window
 from ..uscg_locations import resolve_destination
@@ -164,6 +168,47 @@ async def _debug(request: web.Request) -> web.FileResponse:
     return web.FileResponse(STATIC_DIR / "debug.html")
 
 
+async def _panel(request: web.Request) -> web.FileResponse:
+    """The panel audit tool: font, icon, and sample-data views."""
+    return web.FileResponse(STATIC_DIR / "panel.html")
+
+
+_PANEL_AUDIT_VIEWS = {"chars": render_font_audit, "icons": render_icon_audit}
+
+
+async def _panel_audit(request: web.Request) -> web.Response:
+    """One static frame for the /panel audit tool, rendered through the
+    real pipeline so it is pixel-identical to what the hardware would show.
+    """
+    state: AppState = request.app[STATE_KEY]
+    view = request.query.get("view")
+    if view not in (*_PANEL_AUDIT_VIEWS, "ships"):
+        return web.json_response(
+            {"error": f"view must be one of chars, icons, ships; got {view!r}"},
+            status=400)
+
+    canvas = Canvas(state.settings.panel_width, state.settings.panel_height)
+    if view == "ships":
+        render_frame(canvas, dummy_slots(), Scroller(), dt=0.0)
+    else:
+        _PANEL_AUDIT_VIEWS[view](canvas)
+
+    payload = {
+        "width": state.settings.panel_width,
+        "height": state.settings.panel_height,
+        "rgb": base64.b64encode(canvas.to_bytes()).decode("ascii"),
+    }
+    if view == "icons":
+        # Same order render_icon_audit lays the grid out in, and the same
+        # colors the icons themselves are drawn with - so the legend can
+        # never drift from what's actually on screen.
+        payload["categories"] = [
+            {"name": category.value, "color": list(CATEGORY_COLOR[category])}
+            for category in ShipCategory
+        ]
+    return web.json_response(payload)
+
+
 async def _healthz(request: web.Request) -> web.Response:
     state: AppState = request.app[STATE_KEY]
     age = ((datetime.now(timezone.utc) - state.last_message_at).total_seconds()
@@ -282,6 +327,8 @@ def create_app(state: AppState) -> web.Application:
     app.add_routes([
         web.get("/", _index),
         web.get("/debug", _debug),
+        web.get("/panel", _panel),
+        web.get("/api/panel-audit", _panel_audit),
         web.get("/healthz", _healthz),
         web.get("/api/state", _state),
         web.get("/api/ships", _ships),

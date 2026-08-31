@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ship Observer — Panel Audit</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Ship Observer</h1>
+    <div class="status">panel audit</div>
+  </header>
+
+  <main class="audit">
+    <section class="card mirror">
+      <canvas id="panel" width="64" height="64"></canvas>
+      <p class="hint" id="audit-caption">Every character the panel can draw.</p>
+      <div class="audit-buttons">
+        <button type="button" data-view="chars" class="active">Characters</button>
+        <button type="button" data-view="icons">Icons</button>
+        <button type="button" data-view="ships">Sample data</button>
+      </div>
+    </section>
+
+    <section class="card" id="icon-legend" hidden>
+      <h2>Icon legend</h2>
+      <p class="hint">Same reading order as the grid above: left to right,
+        top to bottom.</p>
+      <div id="icon-legend-grid" class="icon-legend-grid"></div>
+    </section>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/panel-audit.js"></script>
+</body>
+</html>

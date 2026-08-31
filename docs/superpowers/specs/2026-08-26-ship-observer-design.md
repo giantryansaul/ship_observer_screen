@@ -473,6 +473,8 @@ for a trusted LAN.
 |---|---|
 | `GET /` | Kiosk page: panel mirror and connection status only |
 | `GET /debug` | Debug page: panel mirror, live vessels, traffic summary, events, config |
+| `GET /panel` | Panel audit tool: font, icon, and sample-data views, for judging legibility without live traffic |
+| `GET /api/panel-audit` | One rendered frame for `/panel` (`view=chars\|icons\|ships`), plus the category/color legend when `view=icons` |
 | `GET /api/state` | Effective config (API key redacted), connection status, live vessels, departed deque, current slot assignment |
 | `GET /api/ships` | `ship_log` query: `since`, `until`, `category`, `limit` |
 | `GET /api/events` | `event_log` query: `since`, `level`, `category`, `limit` |
