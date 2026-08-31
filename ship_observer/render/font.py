@@ -10,6 +10,16 @@ FONT_H = 6
 FONT_PATH = Path(__file__).parent / "fonts" / "4x6.bdf"
 FALLBACK_CHAR = "?"
 
+# Design overrides on top of the stock BDF, for glyphs that are illegible at
+# LED scale. Rows are 4-bit masks, MSB-first from the left edge of the cell.
+GLYPH_OVERRIDES: dict[str, tuple[int, ...]] = {
+    # Misc-Fixed fakes N's diagonal with two lone corner pixels and runs
+    # neither vertical full-height. This "gate" form - both verticals with a
+    # bar across the top-left - is the classic tiny-font N and stays readable
+    # at 4 mm per pixel.
+    "N": (0b1100, 0b1010, 0b1010, 0b1010, 0b1010, 0b0000),
+}
+
 
 def text_width(text: str) -> int:
     return len(text) * FONT_W
@@ -33,7 +43,9 @@ class Font:
     @classmethod
     @functools.lru_cache(maxsize=1)
     def default(cls) -> "Font":
-        return cls.from_bdf(FONT_PATH)
+        font = cls.from_bdf(FONT_PATH)
+        font._glyphs.update(GLYPH_OVERRIDES)
+        return font
 
     @classmethod
     def from_bdf(cls, path: Path) -> "Font":

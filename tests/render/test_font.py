@@ -80,3 +80,12 @@ def test_clip_window_confines_drawing():
     lit_x = [x for y in range(8) for x in range(64) if c.get_pixel(x, y) != (0, 0, 0)]
     assert lit_x, "something must be drawn inside the window"
     assert all(10 <= x <= 20 for x in lit_x)
+
+
+def test_n_uses_the_gate_glyph_not_the_stock_diagonal():
+    """Misc-Fixed draws N as two corner pixels standing in for a diagonal,
+    which reads as a smudge at LED scale. The user picked the "gate" form -
+    full-height verticals with a bar across the top-left - from the type
+    specimen review (2026-08-31)."""
+    assert Font.default().glyph("N") == (0b1100, 0b1010, 0b1010,
+                                         0b1010, 0b1010, 0b0000)
