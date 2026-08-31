@@ -144,7 +144,13 @@ def _until(request: web.Request) -> datetime | None:
 
 
 async def _index(request: web.Request) -> web.FileResponse:
+    """The panel-only kiosk page: just the mirror and connection status."""
     return web.FileResponse(STATIC_DIR / "index.html")
+
+
+async def _debug(request: web.Request) -> web.FileResponse:
+    """The full debug page: mirror, live vessels, traffic, events, config."""
+    return web.FileResponse(STATIC_DIR / "debug.html")
 
 
 async def _healthz(request: web.Request) -> web.Response:
@@ -264,6 +270,7 @@ def create_app(state: AppState) -> web.Application:
     app[WEBSOCKETS_KEY] = weakref.WeakSet()
     app.add_routes([
         web.get("/", _index),
+        web.get("/debug", _debug),
         web.get("/healthz", _healthz),
         web.get("/api/state", _state),
         web.get("/api/ships", _ships),

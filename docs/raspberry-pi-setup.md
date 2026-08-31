@@ -256,10 +256,10 @@ If `connected` is `false`, the AIS websocket is not up — check the API key.
 
 **Layer 4 — real vessels appear:**
 
-Open `http://ship-observer.local:8080/` in a browser. You should see the panel
-mirror, the vessel table, and the event log. The parsed bounding box is shown in
-the Configuration panel — **check the corners are what you intended**, since a
-transposed paste is otherwise silent.
+Open `http://ship-observer.local:8080/debug` in a browser. You should see the
+panel mirror, the vessel table, and the event log. The parsed bounding box is
+shown in the Configuration panel — **check the corners are what you
+intended**, since a transposed paste is otherwise silent.
 
 Puget Sound traffic is not continuous. If the box is empty, that may simply mean
 nothing is there right now; the event log will confirm the stream is connected
@@ -270,7 +270,7 @@ should show what the browser mirror shows.
 
 ## 10. Tuning after a week
 
-Let it run for a week, then open the Traffic summary panel on the debug page (or
+Let it run for a week, then open the Traffic summary panel on `/debug` (or
 `curl 'http://localhost:8080/api/traffic-summary?window=7d'`).
 
 Use it to answer:
@@ -297,11 +297,11 @@ Edit `/opt/ship-observer/.env`, then `sudo systemctl restart ship-observer`.
 | Colors are wrong (red shows as blue) | Wrong hardware-mapping (`MATRIX_HARDWARE_MAPPING`). Try `adafruit-hat`, `adafruit-hat-pwm`, and `regular` with the `demo` binary until colors are right, then set that value in `.env`. |
 | Top half or bottom half is dark | Most often `MATRIX_ROWS` does not match the panel's real row count (a 64-row panel driven as 32 lights only half). Confirm with `--led-rows=64` vs `--led-rows=32` on the `demo` binary, then set `MATRIX_ROWS` in `.env` to match. If `demo` is correct at the right row count but the running service still isn't, double-check `MATRIX_ROWS` was actually saved to `.env` and the service restarted. Rarely - on non-1/32-scan panels, which this guide does not cover - the row-scan/multiplexing pattern itself is wrong; find the value with `--led-multiplexing=1` (then 2, 3...) on `demo`. This service does not currently expose that setting; it would need to be added as `options.multiplexing` in `RgbMatrixDriver` (`ship_observer/drivers/rgbmatrix.py`) before the service would display correctly with a non-default value. |
 | Service crash-loops immediately | `journalctl -u ship-observer -n 50`. A `Configuration error:` line names the offending variable. A malformed `BBOX` is the usual culprit — it must be four numbers, longitude first, with `min < max` on both axes. |
-| `connected: false` in `/healthz` | The API key is wrong, or the subscription was rejected. The event log on the debug page shows the websocket errors. |
+| `connected: false` in `/healthz` | The API key is wrong, or the subscription was rejected. The event log on `/debug` shows the websocket errors. |
 | Panel dims by half on its own | That is deliberate: no AIS message has arrived for `STALE_SECONDS` (default 120). It means the feed is down, not the display. |
 | `import rgbmatrix` fails | The build was run against the wrong interpreter. Re-run §7 with `PYTHON=` pointing at `~/.pyenv/versions/ship_observer/bin/python`. |
 | `ModuleNotFoundError: PIL` | `pip install -e '/opt/ship-observer[pi]'` — the `pi` extra carries Pillow. |
-| Web UI loads but the panel is black | Look at the vessel table. Rows struck through are being filtered by `MIN_LENGTH_METERS` or `EXCLUDE_CATEGORIES`, and the Status column says which. |
+| Web UI loads but the panel is black | Look at the vessel table on `/debug`. Rows struck through are being filtered by `MIN_LENGTH_METERS` or `EXCLUDE_CATEGORIES`, and the Status column says which. |
 
 ## Useful commands
 

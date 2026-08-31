@@ -49,6 +49,21 @@ async def test_index_serves_html(client):
     assert "canvas" in (await response.text()).lower()
 
 
+async def test_index_serves_only_the_panel_kiosk_page(client):
+    """/ is the panel-only display; the debug tables live at /debug."""
+    body = (await (await client.get("/")).text()).lower()
+    assert "traffic-summary" not in body
+
+
+async def test_debug_serves_the_full_debug_page(client):
+    response = await client.get("/debug")
+    assert response.status == 200
+    assert "text/html" in response.headers["Content-Type"]
+    body = (await response.text()).lower()
+    assert "live-table" in body
+    assert "traffic-summary" in body
+
+
 async def test_healthz_reports_liveness_and_message_age(client):
     client.app_state.last_message_at = datetime.now(timezone.utc) - timedelta(seconds=5)
     client.app_state.connected = True

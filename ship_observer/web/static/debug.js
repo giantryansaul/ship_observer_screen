@@ -1,42 +1,7 @@
 "use strict";
 
-const SCALE = 8;
 const canvas = document.getElementById("panel");
-const ctx = canvas.getContext("2d");
-let imageData = null;
-
-function drawFrame(msg) {
-  const { width, height, rgb } = msg;
-  if (canvas.width !== width * SCALE) {
-    canvas.width = width * SCALE;
-    canvas.height = height * SCALE;
-    ctx.imageSmoothingEnabled = false;
-  }
-  const binary = atob(rgb);
-  if (!imageData || imageData.width !== width) {
-    imageData = ctx.createImageData(width, height);
-  }
-  for (let i = 0, j = 0; i < width * height; i++) {
-    imageData.data[j++] = binary.charCodeAt(i * 3);
-    imageData.data[j++] = binary.charCodeAt(i * 3 + 1);
-    imageData.data[j++] = binary.charCodeAt(i * 3 + 2);
-    imageData.data[j++] = 255;
-  }
-  // Draw at 1:1 into an offscreen buffer, then scale up with smoothing off so
-  // every LED pixel stays a hard square.
-  const off = new OffscreenCanvas(width, height);
-  off.getContext("2d").putImageData(imageData, 0, 0);
-  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
-}
-
-function renderStatus(state) {
-  const el = document.getElementById("status");
-  const age = state.last_message_age_seconds;
-  el.textContent = state.connected
-    ? `connected · last message ${age === null ? "never" : age.toFixed(0) + "s ago"}`
-    : "disconnected";
-  el.className = "status " + (state.stale ? "bad" : "good");
-}
+const statusEl = document.getElementById("status");
 
 function renderLive(state) {
   const body = document.querySelector("#live-table tbody");
@@ -140,28 +105,21 @@ async function refreshEvents() {
   }
 }
 
-function connect() {
-  const scheme = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${scheme}://${location.host}/ws/frames`);
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.type === "frame") {
-      drawFrame(msg);
-    } else if (msg.type === "state") {
-      renderStatus(msg);
-      renderLive(msg);
-      renderConfig(msg);
-    }
-  };
-  ws.onclose = () => {
-    document.getElementById("status").textContent = "reconnecting…";
-    setTimeout(connect, 2000);
-  };
-}
+connectFrames({
+  onFrame: (msg) => drawFrame(canvas, msg),
+  onState: (state) => {
+    renderStatus(statusEl, state);
+    renderLive(state);
+    renderConfig(state);
+  },
+  onReconnecting: () => {
+    statusEl.textContent = "reconnecting…";
+    statusEl.className = "status";
+  },
+});
 
 document.getElementById("window").addEventListener("change", refreshTraffic);
 document.getElementById("level").addEventListener("change", refreshEvents);
-connect();
 refreshTraffic();
 refreshEvents();
 setInterval(refreshTraffic, 60000);

@@ -104,7 +104,8 @@ ship_observer/
     null.py            no-op driver for dev/CI on non-Pi hosts
   web/
     server.py          aiohttp routes + websocket
-    static/            index.html, app.js, style.css
+    static/            index.html (kiosk), debug.html, common.js, panel.js,
+                       debug.js, style.css
 deploy/
   ship-observer.service
   install.sh
@@ -470,7 +471,8 @@ for a trusted LAN.
 
 | Route | Purpose |
 |---|---|
-| `GET /` | Debug page |
+| `GET /` | Kiosk page: panel mirror and connection status only |
+| `GET /debug` | Debug page: panel mirror, live vessels, traffic summary, events, config |
 | `GET /api/state` | Effective config (API key redacted), connection status, live vessels, departed deque, current slot assignment |
 | `GET /api/ships` | `ship_log` query: `since`, `until`, `category`, `limit` |
 | `GET /api/events` | `event_log` query: `since`, `level`, `category`, `limit` |
@@ -482,7 +484,14 @@ The websocket pushes two message kinds: `{"type":"frame","rgb":"<base64>"}` at
 `WEB_FPS` (64x64x3 = 12 KB raw, ~120 KB/s at 10 fps — fine on a LAN), and
 `{"type":"state", ...}` whenever registry state changes.
 
-The page is a single dark-themed view with no build step and no external assets:
+Both pages are dark-themed, with no build step and no external assets.
+
+`/` is a kiosk view meant to be left open: the panel mirror and the
+connection status line, nothing else.
+
+`/debug` adds the operational panels, laid out as a fixed-width rail (mirror,
+vessels, config - stacked, never squeezed by the rest of the page) beside a
+flexible area that adjusts to whatever space is left:
 
 1. **Panel mirror** — the frame drawn to a `<canvas>` at 8x nearest-neighbour
    scale, pixel-accurate to the LED panel, so layout can be tuned without looking
@@ -490,9 +499,9 @@ The page is a single dark-themed view with no build step and no external assets:
 2. **Live vessels** — every vessel in the box, including ones filtered out of the
    display, with category, priority, length, and slot assignment. Filtered rows
    are visibly marked so it is obvious *why* something is not on the panel.
-3. **Traffic summary** — the Section 7.3 aggregates.
-4. **Event log** — live tail with level filtering.
-5. **Config** — effective values including the parsed bounding box corners.
+3. **Config** — effective values including the parsed bounding box corners.
+4. **Traffic summary** — the Section 7.3 aggregates.
+5. **Event log** — live tail with level filtering.
 
 ---
 
