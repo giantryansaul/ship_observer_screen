@@ -131,6 +131,26 @@ def test_panel_audit_js_fetches_the_audit_api_and_draws_with_the_shared_renderer
     assert "drawFrame" in js
 
 
+def test_panel_html_has_a_font_toggle_that_starts_hidden():
+    """The toggle only makes sense for the Characters view, so the markup
+    ships hidden and the script reveals it."""
+    html = (STATIC / "panel.html").read_text()
+    toggle = re.search(r'<div[^>]*id="font-toggle"[^>]*>', html)
+    assert toggle, "missing #font-toggle"
+    assert "hidden" in toggle.group(0)
+    for font in ("small", "large"):
+        assert f'data-font="{font}"' in html, f"missing a button for {font!r}"
+    assert "4x6" in html and "6x10" in html
+
+
+def test_panel_audit_js_asks_for_the_selected_font_and_shows_the_toggle_for_chars():
+    js = (STATIC / "panel-audit.js").read_text()
+    assert "font=" in js, "the chars request must carry the selected font"
+    assert "data-font" in js or "dataset.font" in js
+    assert re.search(r'fontToggle\.hidden\s*=\s*view\s*!==\s*"chars"', js), (
+        "the toggle must be shown only for the Characters view")
+
+
 def test_debug_js_never_interpolates_event_fields_into_innerhtml():
     """event.message can carry AIS-broadcast ship-name text. AIS is an open,
     unauthenticated protocol, so that string is attacker-controlled - it must

@@ -16,6 +16,7 @@ from ..models import ShipCategory, Vessel
 from ..registry import VesselRegistry
 from ..render.audit import dummy_slots, render_font_audit, render_icon_audit
 from ..render.canvas import Canvas
+from ..render.font import Font
 from ..render.icons import CATEGORY_COLOR
 from ..render.layout import capacity, render_frame
 from ..render.scroll import Scroller
@@ -173,7 +174,10 @@ async def _panel(request: web.Request) -> web.FileResponse:
     return web.FileResponse(STATIC_DIR / "panel.html")
 
 
-_PANEL_AUDIT_VIEWS = {"chars": render_font_audit, "icons": render_icon_audit}
+_PANEL_AUDIT_VIEWS = ("chars", "icons", "ships")
+# The characters view can be rendered in either panel font; the others are
+# drawn by code that owns its own sizing.
+_PANEL_AUDIT_FONTS = {"small": Font.default, "large": Font.large}
 
 
 async def _panel_audit(request: web.Request) -> web.Response:
@@ -182,16 +186,23 @@ async def _panel_audit(request: web.Request) -> web.Response:
     """
     state: AppState = request.app[STATE_KEY]
     view = request.query.get("view")
-    if view not in (*_PANEL_AUDIT_VIEWS, "ships"):
+    if view not in _PANEL_AUDIT_VIEWS:
         return web.json_response(
             {"error": f"view must be one of chars, icons, ships; got {view!r}"},
+            status=400)
+    font_name = request.query.get("font", "small")
+    if font_name not in _PANEL_AUDIT_FONTS:
+        return web.json_response(
+            {"error": f"font must be one of small, large; got {font_name!r}"},
             status=400)
 
     canvas = Canvas(state.settings.panel_width, state.settings.panel_height)
     if view == "ships":
         render_frame(canvas, dummy_slots(), Scroller(), dt=0.0)
+    elif view == "icons":
+        render_icon_audit(canvas)
     else:
-        _PANEL_AUDIT_VIEWS[view](canvas)
+        render_font_audit(canvas, font=_PANEL_AUDIT_FONTS[font_name]())
 
     payload = {
         "width": state.settings.panel_width,

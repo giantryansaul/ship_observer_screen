@@ -102,6 +102,24 @@ async def test_panel_audit_api_omits_the_legend_for_other_views(client):
     assert "categories" not in body
 
 
+async def test_panel_audit_api_renders_the_chars_view_in_the_large_font(client):
+    small = await (await client.get("/api/panel-audit?view=chars")).json()
+    large = await (await client.get("/api/panel-audit?view=chars&font=large")).json()
+    assert large["rgb"], "expected a non-empty base64 frame"
+    assert large["rgb"] != small["rgb"], "the 6x10 frame must differ from the 4x6 one"
+
+
+async def test_panel_audit_api_defaults_to_the_small_font(client):
+    default = await (await client.get("/api/panel-audit?view=chars")).json()
+    explicit = await (await client.get("/api/panel-audit?view=chars&font=small")).json()
+    assert default["rgb"] == explicit["rgb"]
+
+
+async def test_panel_audit_api_rejects_an_unknown_font(client):
+    response = await client.get("/api/panel-audit?view=chars&font=bogus")
+    assert response.status == 400
+
+
 async def test_panel_audit_api_rejects_an_unknown_view(client):
     response = await client.get("/api/panel-audit?view=bogus")
     assert response.status == 400

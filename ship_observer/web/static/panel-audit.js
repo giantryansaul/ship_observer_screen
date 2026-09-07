@@ -6,6 +6,10 @@ const caption = document.getElementById("audit-caption");
 const legendCard = document.getElementById("icon-legend");
 const legendGrid = document.getElementById("icon-legend-grid");
 const buttons = document.querySelectorAll("[data-view]");
+const fontToggle = document.getElementById("font-toggle");
+const fontButtons = document.querySelectorAll("[data-font]");
+
+let currentFont = "small";   // only the Characters view is font-switchable
 
 const CAPTIONS = {
   chars: "Every character the panel can draw: the pangram, then the full "
@@ -37,10 +41,12 @@ function renderLegend(categories) {
 }
 
 async function loadView(view) {
-  const response = await fetch(`/api/panel-audit?view=${view}`);
+  const query = view === "chars" ? `view=chars&font=${currentFont}` : `view=${view}`;
+  const response = await fetch(`/api/panel-audit?${query}`);
   const msg = await response.json();
   drawFrame(canvas, msg, SCALE);
   caption.textContent = CAPTIONS[view] || "";
+  fontToggle.hidden = view !== "chars";
 
   const isIcons = view === "icons" && msg.categories;
   legendCard.hidden = !isIcons;
@@ -53,6 +59,16 @@ async function loadView(view) {
 
 for (const button of buttons) {
   button.addEventListener("click", () => loadView(button.dataset.view));
+}
+
+for (const button of fontButtons) {
+  button.addEventListener("click", () => {
+    currentFont = button.dataset.font;
+    for (const other of fontButtons) {
+      other.classList.toggle("active", other === button);
+    }
+    loadView("chars");
+  });
 }
 
 loadView("chars");
