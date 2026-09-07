@@ -151,6 +151,30 @@ def test_panel_audit_js_asks_for_the_selected_font_and_shows_the_toggle_for_char
         "the toggle must be shown only for the Characters view")
 
 
+def test_panel_html_has_icon_size_and_paging_controls_that_start_hidden():
+    """Both only make sense for the Icons view, so - like the font toggle -
+    the markup ships hidden and the script reveals it."""
+    html = (STATIC / "panel.html").read_text()
+    for element_id in ("icon-size-toggle", "icon-paging"):
+        control = re.search(r'<div[^>]*id="' + element_id + r'"[^>]*>', html)
+        assert control, f"missing #{element_id}"
+        assert "hidden" in control.group(0)
+    for size in ("8", "16", "32"):
+        assert f'data-size="{size}"' in html, f"missing a button for {size!r}"
+    for element_id in ("icon-prev", "icon-next", "icon-page-label"):
+        assert f'id="{element_id}"' in html, f"missing #{element_id}"
+
+
+def test_panel_audit_js_asks_for_the_selected_icon_size_and_page():
+    js = (STATIC / "panel-audit.js").read_text()
+    assert "size=" in js and "page=" in js, (
+        "the icons request must carry the selected size and page")
+    assert "data-size" in js or "dataset.size" in js
+    assert re.search(r'sizeToggle\.hidden\s*=\s*view\s*!==\s*"icons"', js), (
+        "the size buttons must be shown only for the Icons view")
+    assert "pages" in js, "paging must follow the page count the API reports"
+
+
 def test_debug_js_never_interpolates_event_fields_into_innerhtml():
     """event.message can carry AIS-broadcast ship-name text. AIS is an open,
     unauthenticated protocol, so that string is attacker-controlled - it must

@@ -12,9 +12,15 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from ..config import Settings
-from ..models import DisplayMode, ShipCategory, Vessel
+from ..models import DisplayMode, Vessel
 from ..registry import VesselRegistry
-from ..render.audit import dummy_slots, render_font_audit, render_icon_audit
+from ..render.audit import (
+    dummy_slots,
+    icon_audit_categories,
+    icon_audit_pages,
+    render_font_audit,
+    render_icon_audit,
+)
 from ..render.canvas import Canvas
 from ..render.font import Font
 from ..render.icons import CATEGORY_COLOR
@@ -182,6 +188,9 @@ _PANEL_AUDIT_VIEWS = ("chars", "icons", "ships")
 # The characters view can be rendered in either panel font; the others are
 # drawn by code that owns its own sizing.
 _PANEL_AUDIT_FONTS = {"small": Font.default, "large": Font.large}
+# The icons view draws one icon size per frame, paging when a size no longer
+# fits every category on one.
+_PANEL_AUDIT_ICON_SIZES = ("8", "16", "32")
 
 
 async def _panel_audit(request: web.Request) -> web.Response:
@@ -199,12 +208,27 @@ async def _panel_audit(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"font must be one of small, large; got {font_name!r}"},
             status=400)
+    size_name = request.query.get("size", "8")
+    if size_name not in _PANEL_AUDIT_ICON_SIZES:
+        return web.json_response(
+            {"error": "size must be one of "
+                      f"{', '.join(_PANEL_AUDIT_ICON_SIZES)}; got {size_name!r}"},
+            status=400)
+    size = int(size_name)
+    pages = icon_audit_pages(size)
+    page_name = request.query.get("page", "0")
+    if not page_name.isdigit() or int(page_name) >= pages:
+        return web.json_response(
+            {"error": f"page must be 0..{pages - 1} at size {size}; "
+                      f"got {page_name!r}"},
+            status=400)
+    page = int(page_name)
 
     canvas = Canvas(state.settings.panel_width, state.settings.panel_height)
     if view == "ships":
         render_frame(canvas, dummy_slots(), Scroller(), dt=0.0)
     elif view == "icons":
-        render_icon_audit(canvas)
+        render_icon_audit(canvas, size=size, page=page)
     else:
         render_font_audit(canvas, font=_PANEL_AUDIT_FONTS[font_name]())
 
@@ -216,10 +240,13 @@ async def _panel_audit(request: web.Request) -> web.Response:
     if view == "icons":
         # Same order render_icon_audit lays the grid out in, and the same
         # colors the icons themselves are drawn with - so the legend can
-        # never drift from what's actually on screen.
+        # never drift from what's actually on screen. Only this page's
+        # categories: the legend identifies icons by grid position.
+        payload["pages"] = pages
+        payload["page"] = page
         payload["categories"] = [
             {"name": category.value, "color": list(CATEGORY_COLOR[category])}
-            for category in ShipCategory
+            for category in icon_audit_categories(size, page)
         ]
     return web.json_response(payload)
 

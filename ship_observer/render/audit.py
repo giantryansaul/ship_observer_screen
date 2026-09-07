@@ -6,6 +6,8 @@ hardware would draw, never a reimplementation kept only for display.
 """
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..models import ShipCategory, Vessel
@@ -25,6 +27,32 @@ ICON_AUDIT_COLS = 3
 ICON_AUDIT_CELL_W = 21
 ICON_AUDIT_CELL_H = 16
 ICON_AUDIT_MARGIN = 2
+
+
+@dataclass(frozen=True)
+class IconGrid:
+    """How many icons of one size fit on a 64x64 frame, and where."""
+
+    cols: int
+    rows: int
+    cell_w: int
+    cell_h: int
+    margin: int
+
+    @property
+    def per_page(self) -> int:
+        return self.cols * self.rows
+
+
+# The 8px grid is the original layout, kept exactly as it was; the bigger
+# icons need whole frames of their own, so they page instead. Two 32px cells
+# fill the panel edge to edge - that art carries its own blank border.
+ICON_AUDIT_GRIDS: dict[int, IconGrid] = {
+    8: IconGrid(cols=ICON_AUDIT_COLS, rows=4, cell_w=ICON_AUDIT_CELL_W,
+                cell_h=ICON_AUDIT_CELL_H, margin=ICON_AUDIT_MARGIN),
+    16: IconGrid(cols=3, rows=3, cell_w=21, cell_h=21, margin=2),
+    32: IconGrid(cols=2, rows=2, cell_w=32, cell_h=32, margin=0),
+}
 
 
 def _wrap(text: str, width: int) -> list[str]:
@@ -50,16 +78,38 @@ def render_font_audit(canvas: Canvas, font: Font | None = None) -> None:
         y += font.height + LINE_GAP
 
 
-def render_icon_audit(canvas: Canvas) -> None:
-    """Every category's icon, laid out in ShipCategory's own definition
+def _icon_grid(size: int) -> IconGrid:
+    try:
+        return ICON_AUDIT_GRIDS[size]
+    except KeyError:
+        raise ValueError(
+            f"icon size must be one of {tuple(ICON_AUDIT_GRIDS)}; "
+            f"got {size!r}") from None
+
+
+def icon_audit_pages(size: int = 8) -> int:
+    """How many 64x64 frames it takes to show every category at this size."""
+    return math.ceil(len(ShipCategory) / _icon_grid(size).per_page)
+
+
+def icon_audit_categories(size: int = 8, page: int = 0) -> list[ShipCategory]:
+    """The categories on one page, in the order the grid draws them."""
+    per_page = _icon_grid(size).per_page
+    return list(ShipCategory)[page * per_page:(page + 1) * per_page]
+
+
+def render_icon_audit(canvas: Canvas, size: int = 8, page: int = 0) -> None:
+    """One page of category icons, laid out in ShipCategory's own definition
     order - the HTML legend mirrors this exact grid so position alone
-    identifies each icon."""
+    identifies each icon. The 8px set fits on a single page; the bigger
+    icons need several."""
+    grid = _icon_grid(size)
     canvas.clear()
-    for index, category in enumerate(ShipCategory):
-        row, col = divmod(index, ICON_AUDIT_COLS)
-        x = col * ICON_AUDIT_CELL_W + ICON_AUDIT_MARGIN
-        y = row * ICON_AUDIT_CELL_H + ICON_AUDIT_MARGIN
-        canvas.blit(icon_for(category), x, y)
+    for index, category in enumerate(icon_audit_categories(size, page)):
+        row, col = divmod(index, grid.cols)
+        x = col * grid.cell_w + grid.margin
+        y = row * grid.cell_h + grid.margin
+        canvas.blit(icon_for(category, size), x, y)
 
 
 def dummy_slots() -> Slots:

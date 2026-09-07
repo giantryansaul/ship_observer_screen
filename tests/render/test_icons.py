@@ -1,7 +1,17 @@
 import pytest
 
 from ship_observer.models import ShipCategory
-from ship_observer.render.icons import CATEGORY_COLOR, ICON_H, ICON_W, icon_for
+from ship_observer.render.icons import (
+    ART_BY_SIZE,
+    CATEGORY_COLOR,
+    ICON_H,
+    ICON_SIZES,
+    ICON_W,
+    icon_for,
+)
+
+# '#' hull, '*' accent, 'R'/'G'/'B' fixed container colours, '.' transparent.
+LEGAL_GLYPHS = set("#*RGB.")
 
 
 def test_icon_dimensions_match_the_layout_budget():
@@ -26,11 +36,12 @@ def test_every_category_has_a_colour(category):
     assert all(0 <= c <= 255 for c in (r, g, b))
 
 
-def test_icons_are_visually_distinct():
+@pytest.mark.parametrize("size", ICON_SIZES)
+def test_icons_are_visually_distinct(size):
     """Two categories rendering identically would make the panel useless."""
     shapes = {}
     for category in ShipCategory:
-        key = tuple(p is not None for p in icon_for(category).pixels)
+        key = tuple(p is not None for p in icon_for(category, size).pixels)
         shapes.setdefault(key, []).append(category.value)
     duplicates = {k: v for k, v in shapes.items() if len(v) > 1}
     assert not duplicates, f"identical icon shapes: {list(duplicates.values())}"
@@ -38,6 +49,59 @@ def test_icons_are_visually_distinct():
 
 def test_icon_for_is_cached():
     assert icon_for(ShipCategory.CARGO) is icon_for(ShipCategory.CARGO)
+
+
+def test_the_three_icon_sizes_are_the_supported_set():
+    assert ICON_SIZES == (8, 16, 32)
+    assert sorted(ART_BY_SIZE) == [8, 16, 32]
+
+
+@pytest.mark.parametrize("size", ICON_SIZES)
+@pytest.mark.parametrize("category", list(ShipCategory))
+def test_every_category_has_square_art_of_legal_glyphs_at_every_size(
+        category, size):
+    """The art is hand-typed string grids, where a single dropped character
+    silently shifts a whole row - so every row is checked against the icon's
+    own width, and every character against the palette."""
+    art = ART_BY_SIZE[size][category]
+    assert len(art) == size, f"{category.value} {size}px art has {len(art)} rows"
+    for index, row in enumerate(art):
+        assert len(row) == size, (
+            f"{category.value} {size}px art row {index} is {len(row)} wide")
+        illegal = set(row) - LEGAL_GLYPHS
+        assert not illegal, (
+            f"{category.value} {size}px art row {index} has {illegal}")
+
+
+@pytest.mark.parametrize("size", ICON_SIZES)
+def test_container_colours_are_reserved_for_the_cargo_icon(size):
+    """R/G/B are fixed container colours, not part of a category's palette -
+    using them elsewhere would draw an icon in someone else's colour."""
+    for category, art in ART_BY_SIZE[size].items():
+        if category is ShipCategory.CARGO:
+            continue
+        assert not set("".join(art)) & set("RGB"), (
+            f"{category.value} {size}px art uses a container colour")
+
+
+@pytest.mark.parametrize("size", ICON_SIZES)
+@pytest.mark.parametrize("category", list(ShipCategory))
+def test_icon_for_renders_the_requested_size(category, size):
+    icon = icon_for(category, size)
+    assert (icon.width, icon.height) == (size, size)
+    assert len(icon.pixels) == size * size
+    assert any(p is not None for p in icon.pixels)
+
+
+def test_icon_for_defaults_to_the_8px_icon():
+    """Existing call sites pass no size and must keep the layout icon."""
+    assert icon_for(ShipCategory.CARGO) == icon_for(ShipCategory.CARGO, 8)
+
+
+@pytest.mark.parametrize("size", [0, 7, 12, 24, 64])
+def test_icon_for_rejects_a_size_with_no_art(size):
+    with pytest.raises(ValueError):
+        icon_for(ShipCategory.CARGO, size)
 
 
 @pytest.mark.parametrize("category", list(ShipCategory))

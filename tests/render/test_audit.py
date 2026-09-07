@@ -4,12 +4,17 @@ These render through the real pipeline (Canvas, draw_text, icon_for,
 render_frame) so what the tool shows is pixel-identical to what the
 hardware would draw - never a reimplementation for display purposes.
 """
+import pytest
+
 from ship_observer.models import ShipCategory
 from ship_observer.render.audit import (
     ICON_AUDIT_CELL_H,
     ICON_AUDIT_CELL_W,
     ICON_AUDIT_COLS,
+    ICON_AUDIT_GRIDS,
     dummy_slots,
+    icon_audit_categories,
+    icon_audit_pages,
     render_font_audit,
     render_icon_audit,
 )
@@ -97,6 +102,78 @@ def test_icon_audit_places_categories_in_a_stable_reading_order():
     assert categories[0] is ShipCategory.PASSENGER
     assert ShipCategory.FISHING in categories
     assert ICON_AUDIT_COLS >= 1
+
+
+def test_icon_audit_pages_the_bigger_icons_across_frames():
+    """11 categories: the 8px grid still fits on one frame, the 16px grid
+    takes 9 at a time, the 32px grid 4."""
+    assert icon_audit_pages(8) == 1
+    assert icon_audit_pages(16) == 2
+    assert icon_audit_pages(32) == 3
+
+
+@pytest.mark.parametrize("size", [8, 16, 32])
+def test_icon_audit_pages_cover_every_category_exactly_once(size):
+    """Paging must partition the categories, in ShipCategory order - a
+    dropped or repeated category would make the tool lie about coverage."""
+    shown = [category
+             for page in range(icon_audit_pages(size))
+             for category in icon_audit_categories(size, page)]
+    assert shown == list(ShipCategory)
+
+
+@pytest.mark.parametrize("size", [8, 16, 32])
+def test_icon_audit_grid_fits_the_panel(size):
+    grid = ICON_AUDIT_GRIDS[size]
+    assert grid.cols * grid.cell_w <= 64
+    assert grid.rows * grid.cell_h <= 64
+    assert grid.margin + size <= min(grid.cell_w, grid.cell_h)
+
+
+@pytest.mark.parametrize("size", [8, 16, 32])
+def test_icon_audit_draws_every_page_inside_the_canvas(size):
+    for page in range(icon_audit_pages(size)):
+        c = Canvas(64, 64)
+        render_icon_audit(c, size=size, page=page)
+        lit = lit_pixels(c)
+        assert lit, f"expected {size}px page {page} to draw something"
+        assert all(0 <= x < 64 and 0 <= y < 64 for x, y in lit)
+
+
+@pytest.mark.parametrize("size", [16, 32])
+def test_icon_audit_keeps_each_bigger_icon_in_its_own_cell(size):
+    """Same guarantee as the 8px grid: position alone identifies an icon, so
+    nothing may bleed into a neighbouring cell."""
+    grid = ICON_AUDIT_GRIDS[size]
+    for page in range(icon_audit_pages(size)):
+        c = Canvas(64, 64)
+        render_icon_audit(c, size=size, page=page)
+        lit = lit_pixels(c)
+        categories = icon_audit_categories(size, page)
+        covered = set()
+        for index, category in enumerate(categories):
+            row, col = divmod(index, grid.cols)
+            x0, y0 = col * grid.cell_w, row * grid.cell_h
+            cell = {(x, y) for x, y in lit
+                    if x0 <= x < x0 + grid.cell_w and y0 <= y < y0 + grid.cell_h}
+            assert cell, f"expected {category.value} to light its cell"
+            covered |= cell
+        assert covered == lit, "an icon drew outside the cells of its page"
+
+
+def test_icon_audit_defaults_to_the_original_single_page_8px_grid():
+    default = Canvas(64, 64)
+    render_icon_audit(default)
+    explicit = Canvas(64, 64)
+    render_icon_audit(explicit, size=8, page=0)
+    assert default.to_bytes() == explicit.to_bytes()
+
+
+def test_icon_audit_rejects_a_size_with_no_grid():
+    with pytest.raises(ValueError):
+        render_icon_audit(Canvas(64, 64), size=12)
+    with pytest.raises(ValueError):
+        icon_audit_pages(12)
 
 
 def test_dummy_slots_has_one_live_and_two_history_vessels():

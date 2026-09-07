@@ -49,6 +49,8 @@ main.audit { flex-direction: column; max-width: 420px; }
 }
 .audit-buttons button:hover { border-color: var(--fg); }
 .audit-buttons button.active { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.audit-buttons button:disabled { opacity: 0.4; cursor: default; border-color: var(--line); }
+.audit-buttons .page-label { flex: 1; align-self: center; text-align: center; margin: 0; }
 .icon-legend-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem 1rem; }
 .icon-legend-cell { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; }
 .icon-legend-swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; flex: none; }

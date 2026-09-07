@@ -96,6 +96,57 @@ async def test_panel_audit_api_includes_the_category_legend_for_icons(client):
     assert tuple(fishing["color"]) == CATEGORY_COLOR[ShipCategory.FISHING]
 
 
+async def test_panel_audit_api_defaults_icons_to_the_8px_single_page_view(client):
+    body = await (await client.get("/api/panel-audit?view=icons")).json()
+    assert body["pages"] == 1
+    assert body["page"] == 0
+    explicit = await (
+        await client.get("/api/panel-audit?view=icons&size=8&page=0")).json()
+    assert body["rgb"] == explicit["rgb"]
+
+
+@pytest.mark.parametrize("size,pages", [(8, 1), (16, 2), (32, 3)])
+async def test_panel_audit_api_reports_the_page_count_for_each_icon_size(
+        client, size, pages):
+    body = await (
+        await client.get(f"/api/panel-audit?view=icons&size={size}")).json()
+    assert body["pages"] == pages
+
+
+async def test_panel_audit_api_renders_a_different_frame_per_icon_size(client):
+    frames = {}
+    for size in (8, 16, 32):
+        body = await (
+            await client.get(f"/api/panel-audit?view=icons&size={size}")).json()
+        frames[size] = body["rgb"]
+    assert len(set(frames.values())) == 3, "each icon size must draw its own art"
+
+
+async def test_panel_audit_api_legend_follows_the_requested_icon_page(client):
+    """The legend identifies icons by grid position, so it must list only the
+    categories actually on the returned page, in that grid's order."""
+    categories = [c.value for c in ShipCategory]
+    first = await (
+        await client.get("/api/panel-audit?view=icons&size=16&page=0")).json()
+    second = await (
+        await client.get("/api/panel-audit?view=icons&size=16&page=1")).json()
+    assert [c["name"] for c in first["categories"]] == categories[:9]
+    assert [c["name"] for c in second["categories"]] == categories[9:]
+    assert second["page"] == 1
+    assert first["rgb"] != second["rgb"]
+
+
+async def test_panel_audit_api_rejects_an_unknown_icon_size(client):
+    response = await client.get("/api/panel-audit?view=icons&size=12")
+    assert response.status == 400
+
+
+@pytest.mark.parametrize("page", ["-1", "2", "nope"])
+async def test_panel_audit_api_rejects_a_page_outside_the_icon_set(client, page):
+    response = await client.get(f"/api/panel-audit?view=icons&size=16&page={page}")
+    assert response.status == 400
+
+
 async def test_panel_audit_api_omits_the_legend_for_other_views(client):
     response = await client.get("/api/panel-audit?view=chars")
     body = await response.json()
