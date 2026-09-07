@@ -7,7 +7,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from ship_observer.config import Settings
-from ship_observer.models import ShipCategory, Vessel
+from ship_observer.models import DisplayMode, ShipCategory, Vessel
 from ship_observer.registry import VesselRegistry
 from ship_observer.storage import Storage
 from ship_observer.web.server import AppState, create_app
@@ -313,3 +313,59 @@ async def test_broadcast_frame_and_broadcast_state_reach_a_connected_client(clie
         await broadcast_state(client.app, client.app_state)
         state_msg = json.loads(await ws.receive_str())
         assert state_msg["type"] == "state"
+
+
+async def test_display_mode_endpoint_reports_the_current_and_available_modes(client):
+    body = await (await client.get("/api/display-mode")).json()
+    assert body["mode"] == "three_ship"
+    assert body["modes"] == ["three_ship", "two_ship", "one_ship"]
+
+
+async def test_display_mode_post_updates_state_and_persists_it(client):
+    response = await client.post("/api/display-mode", json={"mode": "one_ship"})
+    assert response.status == 200
+    assert (await response.json())["mode"] == "one_ship"
+    assert client.app_state.display_mode is DisplayMode.ONE_SHIP
+    # Persisted, so a restart comes back up in the mode the user chose.
+    assert await client.app_state.storage.get_setting("display_mode") == "one_ship"
+
+
+async def test_display_mode_survives_an_app_state_reload(client):
+    await client.post("/api/display-mode", json={"mode": "two_ship"})
+    reloaded = AppState(
+        settings=client.app_state.settings,
+        registry=client.app_state.registry,
+        storage=client.app_state.storage,
+        display_mode=DisplayMode.coerce(
+            await client.app_state.storage.get_setting("display_mode")))
+    assert reloaded.display_mode is DisplayMode.TWO_SHIP
+
+
+@pytest.mark.parametrize("body", [{"mode": "four_ship"}, {"mode": None}, {}])
+async def test_display_mode_post_rejects_an_unknown_mode(client, body):
+    response = await client.post("/api/display-mode", json=body)
+    assert response.status == 400
+    assert "mode" in (await response.json())["error"]
+    assert client.app_state.display_mode is DisplayMode.THREE_SHIP
+
+
+async def test_display_mode_post_rejects_a_non_json_body(client):
+    response = await client.post("/api/display-mode", data="not json")
+    assert response.status == 400
+
+
+async def test_state_reports_the_display_mode(client):
+    client.app_state.display_mode = DisplayMode.TWO_SHIP
+    body = await (await client.get("/api/state")).json()
+    assert body["display_mode"] == "two_ship"
+
+
+async def test_display_mode_post_broadcasts_state_to_open_pages(client):
+    """Every open dropdown follows the change without a reload."""
+    async with client.ws_connect("/ws/frames") as ws:
+        await ws.receive_str()   # initial state push on connect - drain it
+        response = await client.post("/api/display-mode", json={"mode": "one_ship"})
+        assert response.status == 200
+        message = json.loads(await ws.receive_str())
+        assert message["type"] == "state"
+        assert message["display_mode"] == "one_ship"

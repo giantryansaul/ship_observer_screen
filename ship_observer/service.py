@@ -14,14 +14,15 @@ from .ais_client import AisClient
 from .config import Settings
 from .drivers import create_driver
 from .drivers.base import DisplayDriver
-from .models import Vessel
+from .models import DisplayMode, Vessel
 from .registry import VesselRegistry
 from .render.canvas import Canvas
 from .render.layout import capacity, render_frame
 from .render.scroll import Scroller
 from .selection import select_slots
 from .storage import Storage
-from .web.server import AppState, broadcast_frame, broadcast_state, create_app
+from .web.server import (DISPLAY_MODE_SETTING, AppState, broadcast_frame,
+                         broadcast_state, create_app)
 
 log = logging.getLogger(__name__)
 
@@ -63,12 +64,25 @@ class Service:
         if self.client is None:
             self.client = AisClient(self.settings, on_event=self.record_event)
         self.state = AppState(settings=self.settings, registry=self.registry,
-                              storage=self.storage)
+                              storage=self.storage,
+                              display_mode=await self._stored_display_mode())
         self.app = create_app(self.state)
         if self.settings.record_raw_path:
             path = Path(self.settings.record_raw_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             self._raw_file = path.open("a", encoding="utf-8")
+
+    async def _stored_display_mode(self) -> DisplayMode:
+        """The mode the web UI last selected, so a restart comes back up
+        showing what the user chose. Anything unreadable or unrecognized
+        falls back to the default rather than blocking startup.
+        """
+        try:
+            stored = await self.storage.get_setting(DISPLAY_MODE_SETTING)
+        except Exception:
+            log.exception("could not read the stored display mode")
+            return DisplayMode.THREE_SHIP
+        return DisplayMode.coerce(stored)
 
     async def stop(self) -> None:
         # Close every open visit so no ship_log row is left dangling.

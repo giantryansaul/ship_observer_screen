@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS event_log (
   detail   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_ts ON event_log(ts);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 """
 
 _VISIT_COLUMNS = (
@@ -218,6 +223,20 @@ class Storage:
         except (TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
+
+    async def get_setting(self, key: str) -> str | None:
+        """One app-level setting, or None when it was never written."""
+        rows = await self._fetchall(
+            "SELECT value FROM app_settings WHERE key = ?", (key,))
+        return rows[0]["value"] if rows else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """Write a setting, replacing any previous value for the key."""
+        await self._execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
     async def log_event(self, level: str, category: str, message: str,
                         detail: dict[str, Any] | None = None) -> None:

@@ -12,7 +12,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from ..config import Settings
-from ..models import ShipCategory, Vessel
+from ..models import DisplayMode, ShipCategory, Vessel
 from ..registry import VesselRegistry
 from ..render.audit import dummy_slots, render_font_audit, render_icon_audit
 from ..render.canvas import Canvas
@@ -31,6 +31,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 # so both keys are declared untyped rather than with a forward reference.
 WEBSOCKETS_KEY = web.AppKey("websockets")
 STATE_KEY = web.AppKey("state")
+# app_settings key the selected display mode is persisted under.
+DISPLAY_MODE_SETTING = "display_mode"
 
 
 @dataclass
@@ -40,6 +42,7 @@ class AppState:
     settings: Settings
     registry: VesselRegistry
     storage: Storage
+    display_mode: DisplayMode = DisplayMode.THREE_SHIP
     latest_frame: bytes | None = None
     connected: bool = False
     last_message_at: datetime | None = None
@@ -114,6 +117,7 @@ class AppState:
             "uptime_seconds": (now - self.started_at).total_seconds(),
             "dropped_frames": self.dropped_frames,
             "config": self.settings.redacted(),
+            "display_mode": self.display_mode.value,
             "capacity": capacity(self.settings.panel_height),
             "show_divider": slots.show_divider,
             "live": [self.vessel_json(v, slot_index.get(v.mmsi)) for v in live],
@@ -237,6 +241,40 @@ async def _state(request: web.Request) -> web.Response:
     return web.json_response(request.app[STATE_KEY].state_json())
 
 
+def _display_mode_json(state: AppState) -> dict[str, Any]:
+    return {
+        "mode": state.display_mode.value,
+        "modes": [mode.value for mode in DisplayMode],
+    }
+
+
+async def _display_mode(request: web.Request) -> web.Response:
+    return web.json_response(_display_mode_json(request.app[STATE_KEY]))
+
+
+async def _set_display_mode(request: web.Request) -> web.Response:
+    state: AppState = request.app[STATE_KEY]
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "the body must be a JSON object"},
+                                 status=400)
+    raw = body.get("mode") if isinstance(body, dict) else None
+    try:
+        mode = DisplayMode(raw)
+    except ValueError:
+        allowed = ", ".join(m.value for m in DisplayMode)
+        return web.json_response(
+            {"error": f"mode must be one of {allowed}; got {raw!r}"}, status=400)
+
+    state.display_mode = mode
+    await state.storage.set_setting(DISPLAY_MODE_SETTING, mode.value)
+    # Push the new state so every open page's dropdown - including the one
+    # that didn't make the change - follows along without a reload.
+    await broadcast_state(request.app, state)
+    return web.json_response(_display_mode_json(state))
+
+
 def _limit(request: web.Request, default: int = 200) -> int:
     raw = request.query.get("limit", str(default))
     try:
@@ -342,6 +380,8 @@ def create_app(state: AppState) -> web.Application:
         web.get("/api/panel-audit", _panel_audit),
         web.get("/healthz", _healthz),
         web.get("/api/state", _state),
+        web.get("/api/display-mode", _display_mode),
+        web.post("/api/display-mode", _set_display_mode),
         web.get("/api/ships", _ships),
         web.get("/api/events", _events),
         web.get("/api/traffic-summary", _traffic_summary),

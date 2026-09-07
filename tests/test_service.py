@@ -7,7 +7,7 @@ import pytest
 from ship_observer.ais_client import AisMessage
 from ship_observer.config import Settings
 from ship_observer.drivers.null import NullDriver
-from ship_observer.models import ShipCategory
+from ship_observer.models import DisplayMode, ShipCategory
 from ship_observer.selection import is_eligible
 from ship_observer.service import Service
 from ship_observer.storage import Storage
@@ -440,3 +440,38 @@ async def test_entry_seeds_static_from_a_previous_resolved_visit(tmp_path):
         assert rows[-1]["raw_static"] is None  # seeded, not received this visit
     finally:
         await second.stop()
+
+
+async def test_start_defaults_the_display_mode_when_nothing_is_stored(service):
+    assert service.state.display_mode is DisplayMode.THREE_SHIP
+
+
+async def _store_display_mode(tmp_path, value):
+    store = Storage(env(tmp_path)["DB_PATH"])
+    await store.open()
+    await store.set_setting("display_mode", value)
+    await store.close()
+
+
+async def test_start_loads_the_stored_display_mode(tmp_path):
+    """The mode the user picked before the last restart comes back up."""
+    await _store_display_mode(tmp_path, "two_ship")
+    svc = Service(Settings.from_env(env(tmp_path)), driver=NullDriver(64, 64),
+                  client=FakeClient([]))
+    await svc.start()
+    try:
+        assert svc.state.display_mode is DisplayMode.TWO_SHIP
+    finally:
+        await svc.stop()
+
+
+async def test_start_falls_back_to_the_default_for_an_unknown_stored_mode(tmp_path):
+    """A hand-edited or downgraded setting must not stop the panel drawing."""
+    await _store_display_mode(tmp_path, "four_ship")
+    svc = Service(Settings.from_env(env(tmp_path)), driver=NullDriver(64, 64),
+                  client=FakeClient([]))
+    await svc.start()
+    try:
+        assert svc.state.display_mode is DisplayMode.THREE_SHIP
+    finally:
+        await svc.stop()

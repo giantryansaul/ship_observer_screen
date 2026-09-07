@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timezone
-from ship_observer.models import BoundingBox, ShipCategory, Vessel
+from ship_observer.models import BoundingBox, DisplayMode, ShipCategory, Vessel
 
 BBOX_RAW = "-122.527428,47.859476,-122.323322,47.910359"
 
@@ -48,3 +48,18 @@ def test_vessel_defaults_to_unknown_category():
     assert v.category is ShipCategory.UNKNOWN
     assert v.static_resolved is False
     assert v.position_count == 0
+
+
+def test_display_mode_values_are_the_api_identifiers():
+    assert [m.value for m in DisplayMode] == ["three_ship", "two_ship", "one_ship"]
+
+
+@pytest.mark.parametrize("raw", ["three_ship", "two_ship", "one_ship"])
+def test_display_mode_coerce_accepts_every_known_mode(raw):
+    assert DisplayMode.coerce(raw) is DisplayMode(raw)
+
+
+@pytest.mark.parametrize("raw", [None, "", "four_ship", "THREE_SHIP"])
+def test_display_mode_coerce_falls_back_to_the_default(raw):
+    """A missing or hand-edited setting must never stop the panel drawing."""
+    assert DisplayMode.coerce(raw) is DisplayMode.THREE_SHIP

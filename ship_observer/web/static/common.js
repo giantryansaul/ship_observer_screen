@@ -45,6 +45,28 @@ function renderStatus(el, state) {
   el.className = "status " + (state.stale ? "bad" : "good");
 }
 
+// The display-mode dropdown in the page header (absent on /panel). Changing
+// it POSTs the new mode; the server persists it and broadcasts state, which
+// is what actually moves every select - including this one - so two open
+// pages can never disagree about what the panel is showing.
+const displayModeSelect = document.getElementById("display-mode");
+
+if (displayModeSelect) {
+  displayModeSelect.addEventListener("change", () => {
+    fetch("/api/display-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: displayModeSelect.value }),
+    });
+  });
+}
+
+function syncDisplayMode(state) {
+  if (displayModeSelect && state.display_mode) {
+    displayModeSelect.value = state.display_mode;
+  }
+}
+
 // Opens /ws/frames and reconnects on drop. `onFrame`/`onState` receive the
 // two message kinds the socket pushes; `onReconnecting` fires while the
 // socket is down and about to retry.
@@ -57,8 +79,9 @@ function connectFrames({ onFrame, onState, onReconnecting } = {}) {
       const msg = JSON.parse(event.data);
       if (msg.type === "frame" && onFrame) {
         onFrame(msg);
-      } else if (msg.type === "state" && onState) {
-        onState(msg);
+      } else if (msg.type === "state") {
+        syncDisplayMode(msg);
+        if (onState) onState(msg);
       }
     };
     ws.onclose = () => {

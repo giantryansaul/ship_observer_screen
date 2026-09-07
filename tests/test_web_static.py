@@ -162,3 +162,28 @@ def test_debug_js_never_interpolates_event_fields_into_innerhtml():
         "event.message must only ever be assigned via .textContent"
     )
     assert "msg.textContent = e.message" in js
+
+
+@pytest.mark.parametrize("name", ["index.html", "debug.html"])
+def test_pages_offer_the_display_mode_dropdown_in_the_header(name):
+    """One control, same markup on both pages, so the mode can be changed
+    from the kiosk page as well as the debug page."""
+    html = (STATIC / name).read_text()
+    header = re.search(r"<header>(.*?)</header>", html, re.S)
+    assert header, "missing a <header>"
+    assert 'id="display-mode"' in header.group(1), "the select must sit in the header"
+    for value, label in (("three_ship", "3 ship"), ("two_ship", "2 ship"),
+                         ("one_ship", "1 ship detailed")):
+        assert f'<option value="{value}">{label}</option>' in html, (
+            f"missing the {value!r} option")
+
+
+def test_common_js_wires_the_display_mode_dropdown():
+    """POST on change, and follow the broadcast state message so a change
+    made in one tab updates every other open page without a reload."""
+    js = (STATIC / "common.js").read_text()
+    assert "/api/display-mode" in js
+    assert '"POST"' in js
+    assert 'getElementById("display-mode")' in js
+    assert "display_mode" in js, (
+        "the select must follow the display_mode field of the state message")

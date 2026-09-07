@@ -22,6 +22,30 @@ class ShipCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+class DisplayMode(str, Enum):
+    """How many vessels the panel shows at once.
+
+    Chosen from the web UI and persisted in app_settings; the values are
+    also the API identifiers, so they must not be renamed casually.
+    """
+
+    THREE_SHIP = "three_ship"
+    TWO_SHIP = "two_ship"
+    ONE_SHIP = "one_ship"
+
+    @classmethod
+    def coerce(cls, raw: str | None) -> "DisplayMode":
+        """A stored or user-supplied value, falling back to the default.
+
+        A setting that is missing, empty or hand-edited to nonsense must
+        never stop the panel drawing.
+        """
+        try:
+            return cls(raw)
+        except ValueError:
+            return cls.THREE_SHIP
+
+
 @dataclass(frozen=True)
 class BoundingBox:
     """A geographic box. Field order matches the BBOX env var: longitude first."""

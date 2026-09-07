@@ -196,3 +196,21 @@ async def test_latest_static_ignores_visits_without_a_real_payload(store):
 
     assert await store.latest_static(8) is None
     assert await store.latest_static(999) is None
+
+
+async def test_settings_round_trip_and_overwrite(store):
+    assert await store.get_setting("display_mode") is None
+    await store.set_setting("display_mode", "two_ship")
+    assert await store.get_setting("display_mode") == "two_ship"
+    # A second write to the same key replaces it rather than erroring on the
+    # primary key or leaving two rows to disagree.
+    await store.set_setting("display_mode", "one_ship")
+    assert await store.get_setting("display_mode") == "one_ship"
+    rows = await store._fetchall("SELECT COUNT(*) AS n FROM app_settings")
+    assert rows[0]["n"] == 1
+
+
+async def test_settings_keys_are_independent(store):
+    await store.set_setting("a", "1")
+    await store.set_setting("b", "2")
+    assert (await store.get_setting("a"), await store.get_setting("b")) == ("1", "2")
