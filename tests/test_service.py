@@ -586,3 +586,45 @@ async def test_the_render_loop_marks_rotation_vessels_displayed(service):
 
     displayed = [v.mmsi for v in (first, second) if v.displayed]
     assert len(displayed) == 1, f"one page, one displayed vessel: {displayed}"
+
+
+async def test_a_growing_vessel_set_gives_the_new_page_a_full_turn(service):
+    """A quiet box sits on one page for minutes at a time. The moment a
+    second ship arrives, page 0 must actually be drawn - not flipped past
+    by a timer that has been running unchecked since there was nothing to
+    page through.
+    """
+    service.registry._live[1] = _vessel(mmsi=1)
+    for _ in range(6):
+        _rotate(service, DWELL_SECONDS)
+    assert service.state.rotation_page == 0
+
+    service.registry._live[2] = _vessel(mmsi=2)
+    view = _rotate(service, 0.1)
+
+    assert view.pages == 2
+    assert view.page == 0, "the first page of a grown rotation must be shown"
+    assert service._dwell < DWELL_SECONDS, "the dwell timer must restart"
+
+
+async def test_the_first_vessels_in_an_empty_box_get_a_full_turn(service):
+    """Same shape, starting from nothing on screen at all."""
+    for _ in range(6):
+        _rotate(service, DWELL_SECONDS)
+
+    service.registry._live[1] = _vessel(mmsi=1)
+    service.registry._live[2] = _vessel(mmsi=2)
+    assert _rotate(service, 0.1).page == 0
+
+
+async def test_switching_modes_gives_the_new_layout_a_full_turn(service):
+    """Half a rotation into two_ship, the user picks one_ship: the page
+    that lands on screen must get its own dwell, not the leftover."""
+    for mmsi in (1, 2, 3):
+        service.registry._live[mmsi] = _vessel(mmsi=mmsi)
+    _rotate(service, DWELL_SECONDS - 0.5, mode=DisplayMode.TWO_SHIP)
+
+    view = _rotate(service, 0.6, mode=DisplayMode.ONE_SHIP)
+
+    assert view.pages == 3
+    assert view.page == 0, "the leftover dwell must not flip the new page"

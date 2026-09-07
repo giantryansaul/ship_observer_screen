@@ -252,15 +252,22 @@ class Service:
 
         The clock accumulates the render loop's own dt rather than reading
         the wall clock, so a slow frame delays the flip instead of the
-        panel skipping a page nobody saw. A shrinking box (a ship left)
-        restarts the dwell: select_rotation has just clamped the page, and
-        the page it landed on deserves a full turn rather than whatever
-        was left on the timer for a page that no longer exists.
+        panel skipping a page nobody saw.
+
+        Any change in the page count restarts the dwell, because whatever
+        is on the timer was measured against a rotation that no longer
+        exists. Shrinking, that means the page select_rotation just
+        clamped to gets a full turn. Growing, it means the new page 0 is
+        actually drawn: a quiet box sits on one page (or none) for
+        minutes, and nothing consumes the timer while there is nothing to
+        page through, so without the reset the second ship to arrive would
+        flip the panel past the first one on the very next frame. A mode
+        change is the same story - it resizes the pages under the timer.
         """
         page_size = PAGE_SIZE[mode]
         view = select_rotation(live, departed, self.settings, page_size,
                                self.state.rotation_page)
-        if view.pages < self._rotation_pages:
+        if view.pages != self._rotation_pages:
             self._dwell = 0.0
         self._rotation_pages = view.pages
 
