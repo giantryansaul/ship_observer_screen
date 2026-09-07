@@ -9,7 +9,7 @@ from ship_observer.config import Settings
 from ship_observer.drivers.null import NullDriver
 from ship_observer.models import DisplayMode, ShipCategory
 from ship_observer.selection import is_eligible
-from ship_observer.service import Service
+from ship_observer.service import DWELL_SECONDS, Service
 from ship_observer.storage import Storage
 
 T0 = datetime(2026, 8, 26, 17, 0, 0, tzinfo=timezone.utc)
@@ -318,7 +318,7 @@ async def test_render_error_dedup_survives_a_varying_message(service, monkeypatc
         calls["n"] += 1
         raise IndexError(f"list index out of range: item {calls['n']}")
 
-    monkeypatch.setattr(service_module, "render_frame", flaky_render)
+    monkeypatch.setattr(service_module, "render_display", flaky_render)
 
     task = asyncio.create_task(service.render_loop())
     await asyncio.sleep(0.3)
@@ -475,3 +475,114 @@ async def test_start_falls_back_to_the_default_for_an_unknown_stored_mode(tmp_pa
         assert svc.state.display_mode is DisplayMode.THREE_SHIP
     finally:
         await svc.stop()
+
+
+# -- the rotation clock (2- and 1-ship modes) -------------------------------
+
+
+def _rotate(svc, dt, mode=DisplayMode.ONE_SHIP):
+    return svc._advance_rotation(mode, dt, svc.registry.live(),
+                                 svc.registry.departed())
+
+
+async def test_the_rotation_holds_a_page_for_the_dwell_time(service):
+    for mmsi in (1, 2, 3):
+        service.registry._live[mmsi] = _vessel(mmsi=mmsi)
+
+    view = _rotate(service, 0.1)
+    assert view.pages == 3 and view.page == 0
+
+    _rotate(service, DWELL_SECONDS - 1.0)
+    assert service.state.rotation_page == 0, "the page must not flick early"
+
+    assert _rotate(service, 1.0).page == 1
+    assert service.state.rotation_page == 1
+
+
+async def test_the_rotation_wraps_back_to_the_first_page(service):
+    for mmsi in (1, 2):
+        service.registry._live[mmsi] = _vessel(mmsi=mmsi)
+    assert _rotate(service, DWELL_SECONDS).page == 1
+    assert _rotate(service, DWELL_SECONDS).page == 0
+
+
+async def test_a_single_page_never_advances(service):
+    service.registry._live[1] = _vessel(mmsi=1)
+    for _ in range(3):
+        view = _rotate(service, DWELL_SECONDS)
+    assert view.pages == 1 and view.page == 0
+
+
+async def test_an_empty_box_rotates_nothing(service):
+    view = _rotate(service, DWELL_SECONDS)
+    assert view.vessels == [] and view.pages == 0
+    assert service.state.rotation_page == 0
+
+
+async def test_a_shrinking_vessel_set_clamps_the_page_and_restarts_the_dwell(service):
+    """Three ships leave while page 3 of 3 is up: the clamped page must get
+    a full turn on screen, not be flicked past by the leftover timer."""
+    for mmsi in (1, 2, 3):
+        service.registry._live[mmsi] = _vessel(mmsi=mmsi)
+    _rotate(service, DWELL_SECONDS)
+    _rotate(service, DWELL_SECONDS)
+    assert service.state.rotation_page == 2
+
+    del service.registry._live[2]
+    del service.registry._live[3]
+    view = _rotate(service, DWELL_SECONDS - 0.5)
+
+    assert view.pages == 1 and view.page == 0
+    assert service.state.rotation_page == 0
+    assert service._dwell < DWELL_SECONDS, "the dwell timer must restart"
+
+
+async def test_the_rotation_falls_back_to_recently_departed(tmp_path):
+    settings = Settings.from_env(env(tmp_path, DISPLAY_HISTORY="true"))
+    svc = Service(settings, driver=NullDriver(64, 64), client=FakeClient([]))
+    await svc.start()
+    try:
+        gone = _vessel(mmsi=7)
+        gone.departed_at = datetime.now(timezone.utc)
+        svc.registry._departed.appendleft(gone)
+        view = _rotate(svc, 0.1)
+        assert view.from_history is True
+        assert [v.mmsi for v in view.vessels] == [7]
+    finally:
+        await svc.stop()
+
+
+async def test_the_render_loop_draws_the_selected_display_mode(service):
+    """The 1-ship layout puts the name below row 32 - somewhere the 3-ship
+    layout, whose first block is 19px tall, can never draw."""
+    service.registry._live[1] = _vessel(mmsi=1)
+    service.state.display_mode = DisplayMode.ONE_SHIP
+
+    task = asyncio.create_task(service.render_loop())
+    await asyncio.sleep(0.15)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    rows = {y for y in range(64) for x in range(64)
+            if service.canvas.get_pixel(x, y) != (0, 0, 0)}
+    assert max(rows) >= 32, "the 1-ship layout must be what was drawn"
+
+
+async def test_the_render_loop_marks_rotation_vessels_displayed(service):
+    """Only the vessel on the current page is on screen, so only it counts
+    as displayed - the other is still waiting its turn in the rotation."""
+    first, second = _vessel(mmsi=1), _vessel(mmsi=2)
+    for vessel in (first, second):
+        service.registry._live[vessel.mmsi] = vessel
+        vessel.log_id = await service.storage.begin_visit(vessel)
+    service.state.display_mode = DisplayMode.ONE_SHIP
+
+    task = asyncio.create_task(service.render_loop())
+    await asyncio.sleep(0.15)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    displayed = [v.mmsi for v in (first, second) if v.displayed]
+    assert len(displayed) == 1, f"one page, one displayed vessel: {displayed}"

@@ -22,11 +22,13 @@ from ..render.audit import (
     render_icon_audit,
 )
 from ..render.canvas import Canvas
+from ..render.display import PAGE_SIZE, render_display
 from ..render.font import Font
 from ..render.icons import CATEGORY_COLOR
-from ..render.layout import capacity, render_frame
+from ..render.layout import capacity
 from ..render.scroll import Scroller
-from ..selection import Slots, filtered_reason, is_eligible, select_slots
+from ..selection import (Slots, filtered_reason, is_eligible, select_rotation,
+                         select_slots)
 from ..storage import Storage, parse_window
 from ..uscg_locations import resolve_destination
 
@@ -49,6 +51,9 @@ class AppState:
     registry: VesselRegistry
     storage: Storage
     display_mode: DisplayMode = DisplayMode.THREE_SHIP
+    # Which page of the rotation the 2- and 1-ship modes are showing, kept
+    # current by the render loop's rotation clock.
+    rotation_page: int = 0
     latest_frame: bytes | None = None
     connected: bool = False
     last_message_at: datetime | None = None
@@ -103,13 +108,34 @@ class AppState:
             "slot": slot,
         }
 
+    def _on_screen(self, live: list[Vessel],
+                   departed: list[Vessel]) -> tuple[list[Vessel],
+                                                    list[Vessel], bool]:
+        """The vessels the panel is actually drawing, for the current mode.
+
+        The debug page's slot numbers have to describe what is on the
+        panel; in a rotation mode that is one page of the box, not the
+        3-ship layout's three slots. The rotation modes have no divider,
+        so they never claim one.
+        """
+        if self.display_mode is DisplayMode.THREE_SHIP:
+            slots = select_slots(live, departed, self.settings,
+                                 capacity(self.settings.panel_height))
+            return slots.live, slots.history, slots.show_divider
+        view = select_rotation(live, departed, self.settings,
+                               PAGE_SIZE[self.display_mode],
+                               self.rotation_page)
+        if view.from_history:
+            return [], view.vessels, False
+        return view.vessels, [], False
+
     def state_json(self) -> dict[str, Any]:
         live = self.registry.live()
         departed = self.registry.departed()
-        slots = select_slots(live, departed, self.settings,
-                             capacity(self.settings.panel_height))
-        slot_index = {v.mmsi: i for i, v in enumerate(slots.live)}
-        history_index = {v.mmsi: i for i, v in enumerate(slots.history)}
+        on_screen, on_screen_history, show_divider = self._on_screen(
+            live, departed)
+        slot_index = {v.mmsi: i for i, v in enumerate(on_screen)}
+        history_index = {v.mmsi: i for i, v in enumerate(on_screen_history)}
         now = datetime.now(timezone.utc)
         age = ((now - self.last_message_at).total_seconds()
                if self.last_message_at else None)
@@ -125,7 +151,7 @@ class AppState:
             "config": self.settings.redacted(),
             "display_mode": self.display_mode.value,
             "capacity": capacity(self.settings.panel_height),
-            "show_divider": slots.show_divider,
+            "show_divider": show_divider,
             "live": [self.vessel_json(v, slot_index.get(v.mmsi)) for v in live],
             "history": [self.vessel_json(v, history_index.get(v.mmsi))
                         for v in departed],
@@ -226,7 +252,10 @@ async def _panel_audit(request: web.Request) -> web.Response:
 
     canvas = Canvas(state.settings.panel_width, state.settings.panel_height)
     if view == "ships":
-        render_frame(canvas, dummy_slots(), Scroller(), dt=0.0)
+        # In the mode the panel is actually in: an audit of a layout
+        # nobody is looking at is worth nothing.
+        render_display(state.display_mode, canvas, dummy_slots(), Scroller(),
+                       dt=0.0)
     elif view == "icons":
         render_icon_audit(canvas, size=size, page=page)
     else:

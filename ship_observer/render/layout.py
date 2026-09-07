@@ -6,7 +6,7 @@ from ..models import Vessel
 from ..selection import Slots
 from ..uscg_locations import resolve_destination
 from .canvas import RGB, Canvas
-from .font import draw_text, text_width
+from .font import Font, draw_text, text_width
 from .icons import icon_for
 from .scroll import Scroller
 
@@ -49,6 +49,18 @@ def format_length(vessel: Vessel) -> str:
     return f"{round(vessel.length_m)}m"
 
 
+def format_sog(vessel: Vessel) -> str:
+    """The fastest speed seen this visit, or '' when none was reported.
+
+    Trailing '.0' is dropped: '12kn' says as much as '12.0kn' in four fewer
+    pixels, and slow movers still keep the tenth that distinguishes a tug
+    working from a tug moored.
+    """
+    if vessel.max_sog is None:
+        return ""
+    return f"{vessel.max_sog:.1f}".rstrip('0').rstrip('.') + "kn"
+
+
 def format_line2(vessel: Vessel) -> str:
     """`CALLSIGN > DESTINATION`, degrading gracefully when either is missing.
 
@@ -63,6 +75,58 @@ def format_line2(vessel: Vessel) -> str:
             dest_text = resolved.panel_text
     destination = f"> {dest_text}" if dest_text else ""
     return " ".join(part for part in (call_sign, destination) if part)
+
+
+def fit_parts(parts: list[str], box_width: int, tag: str = "",
+              sep: str = " ", font: Font | None = None) -> str:
+    """Join `parts`, dropping the rightmost until the line fits.
+
+    Shared by the 2- and 1-ship detail rows, where a long category word or
+    a `LAST SEEN` tag can push the line past the panel edge. Parts are
+    ordered most- to least-important, so losing the tail is always better
+    than clipping mid-word or squeezing the gaps to nothing. `tag` is drawn
+    right-aligned on the same row, so its width plus one blank cell is
+    reserved before anything is measured.
+    """
+    reserved = (text_width(tag, font) + (font or Font.default()).width
+                if tag else 0)
+    kept = [part for part in parts if part]
+    while kept:
+        text = sep.join(kept)
+        if text_width(text, font) + reserved <= box_width:
+            return text
+        kept.pop()
+    return ""
+
+
+def text_x(text: str, box_width: int, offset: int,
+           font: Font | None = None, center: bool = False) -> int:
+    """Where a line of text starts: the scroller's offset while it
+    overflows, otherwise flush left - or centred, for the stacked 1-ship
+    layout whose whole composition is centred on its icon."""
+    if center and text_width(text, font) <= box_width:
+        return (box_width - text_width(text, font)) // 2
+    return offset
+
+
+def draw_line2(canvas: Canvas, vessel: Vessel, y: int, scroller: Scroller,
+               dt: float, box_width: int = LINE2_BOX_W,
+               center: bool = False) -> None:
+    """`CALLSIGN > DESTINATION`, in every mode.
+
+    Callsign and destination are drawn as one scrolling string so they
+    travel together, then re-coloured by character position.
+    """
+    line2 = format_line2(vessel)
+    if not line2:
+        return
+    offset = scroller.offset_for((vessel.mmsi, "line2"), line2, box_width, dt)
+    x = text_x(line2, box_width, offset, center=center)
+    split = len(vessel.call_sign or "")
+    draw_text(canvas, line2[:split], x, y, CALLSIGN_COLOR,
+              clip_x0=0, clip_x1=box_width - 1)
+    draw_text(canvas, line2[split:], x + text_width(line2[:split]), y,
+              DEST_COLOR, clip_x0=0, clip_x1=box_width - 1)
 
 
 def _draw_scrolling(canvas: Canvas, key: Hashable, text: str, x: int, y: int,
@@ -86,18 +150,7 @@ def _draw_block(canvas: Canvas, vessel: Vessel, y: int, scroller: Scroller,
         length_x = canvas.width - text_width(length_text)
         draw_text(canvas, length_text, length_x, y + NAME_Y_OFFSET, LENGTH_COLOR)
 
-    line2 = format_line2(vessel)
-    if line2:
-        # Callsign and destination are drawn as one scrolling string so they
-        # travel together, then re-coloured by character position.
-        offset = scroller.offset_for((vessel.mmsi, "line2"), line2,
-                                     LINE2_BOX_W, dt)
-        split = len(vessel.call_sign or "")
-        draw_text(canvas, line2[:split], offset, y + LINE2_Y_OFFSET,
-                  CALLSIGN_COLOR, clip_x0=0, clip_x1=LINE2_BOX_W - 1)
-        draw_text(canvas, line2[split:], offset + text_width(line2[:split]),
-                  y + LINE2_Y_OFFSET, DEST_COLOR,
-                  clip_x0=0, clip_x1=LINE2_BOX_W - 1)
+    draw_line2(canvas, vessel, y + LINE2_Y_OFFSET, scroller, dt)
 
     canvas.hline(y + SEPARATOR_Y_OFFSET, 0, canvas.width - 1, SEPARATOR_COLOR)
 

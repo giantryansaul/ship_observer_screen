@@ -2,7 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from ship_observer.config import Settings
 from ship_observer.models import ShipCategory, Vessel
-from ship_observer.selection import filtered_reason, is_eligible, select_slots
+from ship_observer.selection import (RotationView, Slots, filtered_reason,
+                                     is_eligible, select_rotation,
+                                     select_slots)
 
 T0 = datetime(2026, 8, 26, 17, 0, 0, tzinfo=timezone.utc)
 MINIMAL = {"AIS_STREAM_API_KEY": "k",
@@ -152,3 +154,124 @@ def test_history_is_filtered_too():
                          settings(DISPLAY_HISTORY="true", MIN_LENGTH_METERS="50"),
                          capacity=3)
     assert [v.mmsi for v in slots.history] == [2]
+
+
+# -- rotation (the 2- and 1-ship modes page through everything) -------------
+
+
+def departed(mmsi, minutes, **kwargs):
+    v = vessel(mmsi, minutes, **kwargs)
+    v.departed_at = T0 + timedelta(minutes=minutes + 1)
+    return v
+
+
+def test_rotation_pages_through_every_eligible_live_vessel():
+    """Unlike select_slots, nothing is dropped for want of a slot - the
+    whole box is shown, a page at a time."""
+    live = [vessel(i, i) for i in range(5)]
+    view = select_rotation(live, [], settings(), page_size=2, page=0)
+    assert view.pages == 3
+    assert len(view.vessels) == 2
+    assert view.from_history is False
+    last = select_rotation(live, [], settings(), page_size=2, page=2)
+    assert len(last.vessels) == 1
+
+
+def test_rotation_pages_partition_the_whole_ordering():
+    live = [vessel(i, i) for i in range(5)]
+    seen = []
+    for page in range(3):
+        seen += [v.mmsi for v in
+                 select_rotation(live, [], settings(), 2, page).vessels]
+    assert sorted(seen) == [0, 1, 2, 3, 4]
+    assert len(seen) == len(set(seen)), "no vessel may appear on two pages"
+
+
+def test_rotation_uses_the_same_priority_ordering_as_select_slots():
+    live = [
+        vessel(1, 4, ShipCategory.SAILING, 10, 12.0),
+        vessel(2, 3, ShipCategory.FISHING, 10, 18.0),
+        vessel(3, 2, ShipCategory.CARGO, 30),
+        vessel(4, 1, ShipCategory.PASSENGER, 40, 120.0),
+        vessel(5, 0, ShipCategory.TANKER, 30),
+    ]
+    view = select_rotation(live, [], settings(), page_size=3, page=0)
+    # Same winners select_slots(capacity=3) picks, in priority order.
+    assert [v.mmsi for v in view.vessels] == [4, 3, 5]
+    assert set(v.mmsi for v in view.vessels) == {
+        v.mmsi for v in select_slots(live, [], settings(), capacity=3).live}
+
+
+def test_rotation_without_priority_selection_is_pure_recency():
+    live = [vessel(1, 0, ShipCategory.SAILING, 10, 12.0),
+            vessel(2, 1, ShipCategory.PASSENGER, 40, 120.0)]
+    view = select_rotation(live, [], settings(PRIORITY_SELECTION="false"), 2, 0)
+    assert [v.mmsi for v in view.vessels] == [2, 1]
+
+
+def test_rotation_normalizes_the_page_modulo_the_page_count():
+    live = [vessel(i, i) for i in range(5)]
+    assert select_rotation(live, [], settings(), 2, page=3).page == 0
+    assert select_rotation(live, [], settings(), 2, page=7).page == 1
+    assert select_rotation(live, [], settings(), 2, page=-1).page == 2
+
+
+def test_rotation_falls_back_to_recently_departed_when_the_box_is_empty():
+    history = [departed(1, 3), departed(2, 2), departed(3, 1)]
+    view = select_rotation([], history, settings(DISPLAY_HISTORY="true"), 2, 0)
+    assert view.from_history is True
+    assert [v.mmsi for v in view.vessels] == [1, 2], "departed order is preserved"
+    assert view.pages == 2
+
+
+def test_rotation_prefers_live_vessels_over_history():
+    view = select_rotation([vessel(1, 0)], [departed(2, 0)],
+                           settings(DISPLAY_HISTORY="true"), 2, 0)
+    assert view.from_history is False
+    assert [v.mmsi for v in view.vessels] == [1]
+
+
+def test_rotation_history_fallback_respects_the_history_setting():
+    view = select_rotation([], [departed(1, 0)],
+                           settings(DISPLAY_HISTORY="false"), 2, 0)
+    assert view.vessels == [] and view.pages == 0
+    assert view.from_history is False
+
+
+def test_rotation_of_an_empty_box_is_an_empty_view():
+    view = select_rotation([], [], settings(DISPLAY_HISTORY="true"), 2, 0)
+    assert view.vessels == []
+    assert view.pages == 0 and view.page == 0
+    assert view.from_history is False
+
+
+def test_rotation_applies_the_same_display_gates():
+    live = [vessel(1, 1, ShipCategory.SAILING, 10, 12.0), vessel(2, 0)]
+    view = select_rotation(live, [], settings(MIN_LENGTH_METERS="50"), 2, 0)
+    assert [v.mmsi for v in view.vessels] == [2]
+
+
+def test_rotation_with_no_room_shows_nothing():
+    """A non-positive page size must not divide by zero."""
+    view = select_rotation([vessel(1, 0)], [], settings(), page_size=0, page=0)
+    assert view.vessels == [] and view.pages == 0
+
+
+def test_rotation_view_from_slots_uses_the_live_slots():
+    slots = select_slots([vessel(1, 1), vessel(2, 0)], [], settings(), capacity=3)
+    view = RotationView.from_slots(slots, page_size=1)
+    assert [v.mmsi for v in view.vessels] == [1]
+    assert view.pages == 1 and view.page == 0 and view.from_history is False
+
+
+def test_rotation_view_from_slots_falls_back_to_history():
+    slots = select_slots([], [departed(1, 0)], settings(DISPLAY_HISTORY="true"),
+                         capacity=3)
+    view = RotationView.from_slots(slots, page_size=2)
+    assert [v.mmsi for v in view.vessels] == [1]
+    assert view.from_history is True
+
+
+def test_rotation_view_from_empty_slots_is_empty():
+    view = RotationView.from_slots(Slots(), page_size=2)
+    assert view.vessels == [] and view.pages == 0

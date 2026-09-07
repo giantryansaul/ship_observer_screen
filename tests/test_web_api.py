@@ -420,3 +420,75 @@ async def test_display_mode_post_broadcasts_state_to_open_pages(client):
         message = json.loads(await ws.receive_str())
         assert message["type"] == "state"
         assert message["display_mode"] == "one_ship"
+
+
+async def test_panel_audit_ships_view_follows_the_live_display_mode(client):
+    """The audit tool has to show the layout the panel is actually drawing,
+    or it audits a mode nobody is looking at."""
+    from ship_observer.render.audit import dummy_slots
+    from ship_observer.render.canvas import Canvas
+    from ship_observer.render.display import render_display
+    from ship_observer.render.scroll import Scroller
+
+    client.app_state.display_mode = DisplayMode.ONE_SHIP
+    body = await (await client.get("/api/panel-audit?view=ships")).json()
+
+    expected = Canvas(64, 64)
+    render_display(DisplayMode.ONE_SHIP, expected, dummy_slots(), Scroller(),
+                   dt=0.0)
+    assert base64.b64decode(body["rgb"]) == expected.to_bytes()
+
+
+async def test_panel_audit_ships_view_differs_between_modes(client):
+    client.app_state.display_mode = DisplayMode.THREE_SHIP
+    three = await (await client.get("/api/panel-audit?view=ships")).json()
+    client.app_state.display_mode = DisplayMode.TWO_SHIP
+    two = await (await client.get("/api/panel-audit?view=ships")).json()
+    assert three["rgb"] != two["rgb"]
+
+
+async def test_state_slot_numbering_follows_the_display_mode(client):
+    """In a rotation mode only the vessels on the current page are on
+    screen, so only they may carry a slot number."""
+    registry = client.app_state.registry
+    for mmsi in (1, 2, 3):
+        registry._live[mmsi] = vessel(mmsi, entered_at=T0 + timedelta(minutes=mmsi))
+
+    client.app_state.display_mode = DisplayMode.THREE_SHIP
+    body = await (await client.get("/api/state")).json()
+    assert sorted(v["slot"] for v in body["live"]) == [0, 1, 2]
+
+    client.app_state.display_mode = DisplayMode.TWO_SHIP
+    body = await (await client.get("/api/state")).json()
+    slots = sorted((v["slot"] for v in body["live"]),
+                   key=lambda s: (s is None, s))
+    assert slots == [0, 1, None], "only the current page is on screen"
+
+
+async def test_state_slot_numbering_follows_the_rotation_page(client):
+    registry = client.app_state.registry
+    for mmsi in (1, 2):
+        registry._live[mmsi] = vessel(mmsi, entered_at=T0 + timedelta(minutes=mmsi))
+    client.app_state.display_mode = DisplayMode.ONE_SHIP
+
+    client.app_state.rotation_page = 0
+    first = await (await client.get("/api/state")).json()
+    client.app_state.rotation_page = 1
+    second = await (await client.get("/api/state")).json()
+
+    on_screen = [{v["mmsi"] for v in body["live"] if v["slot"] is not None}
+                 for body in (first, second)]
+    assert all(len(page) == 1 for page in on_screen)
+    assert on_screen[0] != on_screen[1], "the page must change who is on screen"
+
+
+async def test_state_tags_a_history_page_in_a_rotation_mode(client, tmp_path):
+    client.app_state.settings = Settings.from_env(
+        {**MINIMAL, "DISPLAY_HISTORY": "true", "DB_PATH": str(tmp_path / "h.db")})
+    departed = vessel(9, departed_at=T0, depart_reason="left_bbox")
+    client.app_state.registry._departed.appendleft(departed)
+    client.app_state.display_mode = DisplayMode.ONE_SHIP
+
+    body = await (await client.get("/api/state")).json()
+    assert [v["slot"] for v in body["history"]] == [0]
+    assert body["live"] == []

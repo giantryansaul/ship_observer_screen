@@ -17,9 +17,10 @@ from .drivers.base import DisplayDriver
 from .models import DisplayMode, Vessel
 from .registry import VesselRegistry
 from .render.canvas import Canvas
-from .render.layout import capacity, render_frame
+from .render.display import PAGE_SIZE, render_display
+from .render.layout import capacity
 from .render.scroll import Scroller
-from .selection import select_slots
+from .selection import RotationView, select_rotation, select_slots
 from .storage import Storage
 from .web.server import (DISPLAY_MODE_SETTING, AppState, broadcast_frame,
                          broadcast_state, create_app)
@@ -29,6 +30,10 @@ log = logging.getLogger(__name__)
 REGISTRY_PRUNE_INTERVAL = 30.0     # seconds
 RETENTION_INTERVAL = 3600.0        # hourly
 VISIT_UPDATE_INTERVAL = 30.0       # how often an open visit row is rewritten
+# How long one page of the 2- and 1-ship rotation stays on screen. Long
+# enough to read a name and destination off the panel in passing; short
+# enough that a busy box still comes round inside a couple of minutes.
+DWELL_SECONDS = 10.0
 
 
 class Service:
@@ -50,6 +55,11 @@ class Service:
         self._raw_file = None
         self._last_visit_write: dict[int, float] = {}
         self._render_errors: set[str] = set()
+        # Rotation clock for the 2- and 1-ship modes. The page itself lives
+        # on AppState, so the web layer numbers slots by what is actually
+        # on screen; only the timer that moves it is private here.
+        self._dwell = 0.0
+        self._rotation_pages = 0
         # create_task()'s return value must be kept somewhere, or the task
         # can be garbage-collected mid-execution - a documented asyncio
         # footgun. Discarded via add_done_callback once it finishes.
@@ -235,6 +245,33 @@ class Service:
         self._last_visit_write[vessel.mmsi] = now
         return True
 
+    def _advance_rotation(self, mode: DisplayMode, dt: float,
+                          live: list[Vessel],
+                          departed: list[Vessel]) -> RotationView:
+        """The rotation page the 2- and 1-ship modes should draw now.
+
+        The clock accumulates the render loop's own dt rather than reading
+        the wall clock, so a slow frame delays the flip instead of the
+        panel skipping a page nobody saw. A shrinking box (a ship left)
+        restarts the dwell: select_rotation has just clamped the page, and
+        the page it landed on deserves a full turn rather than whatever
+        was left on the timer for a page that no longer exists.
+        """
+        page_size = PAGE_SIZE[mode]
+        view = select_rotation(live, departed, self.settings, page_size,
+                               self.state.rotation_page)
+        if view.pages < self._rotation_pages:
+            self._dwell = 0.0
+        self._rotation_pages = view.pages
+
+        self._dwell += dt
+        if self._dwell >= DWELL_SECONDS and view.pages > 1:
+            self._dwell = 0.0
+            view = select_rotation(live, departed, self.settings, page_size,
+                                   view.page + 1)
+        self.state.rotation_page = view.page
+        return view
+
     async def render_loop(self) -> None:
         assert self.state is not None and self.driver is not None
         interval = 1.0 / self.settings.render_fps
@@ -254,9 +291,14 @@ class Service:
             self.state.connected = bool(getattr(self.client, "connected", False))
             self.state.dropped_frames = getattr(self.client, "dropped_frames", 0)
 
-            slots = select_slots(self.registry.live(), self.registry.departed(),
-                                 self.settings, capacity(self.settings.panel_height))
+            live, departed = self.registry.live(), self.registry.departed()
+            slots = select_slots(live, departed, self.settings,
+                                 capacity(self.settings.panel_height))
             self.state.slots = slots
+
+            mode = self.state.display_mode
+            view = (None if mode is DisplayMode.THREE_SHIP
+                    else self._advance_rotation(mode, dt, live, departed))
 
             age = None
             if self.state.last_message_at is not None:
@@ -265,7 +307,8 @@ class Service:
             stale = age is None or age > self.settings.stale_seconds
 
             try:
-                render_frame(self.canvas, slots, self.scroller, dt, stale=stale)
+                render_display(mode, self.canvas, slots, self.scroller, dt,
+                               stale=stale, view=view)
                 frame = self.canvas.to_bytes()
                 self.state.latest_frame = frame
                 self.driver.show(frame)
@@ -288,7 +331,12 @@ class Service:
                 await asyncio.sleep(interval)
                 continue
 
-            for vessel in slots.live:
+            # `displayed` means "was actually on the panel": in a rotation
+            # mode that is this page's vessels, not every one waiting its
+            # turn - the rest are marked as their pages come up.
+            on_screen = slots.live if view is None else (
+                [] if view.from_history else view.vessels)
+            for vessel in on_screen:
                 if not vessel.displayed:
                     vessel.displayed = True
                     await self._safe(self.storage.update_visit(vessel))
