@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 from ..models import ShipCategory, Vessel
 from ..selection import Slots
 from .canvas import RGB, Canvas
-from .font import FONT_H, draw_text, max_chars
+from .font import Font, draw_text, max_chars
 from .icons import icon_for
 
 TEXT_COLOR: RGB = (255, 255, 255)
-LINE_H = FONT_H + 1
+LINE_GAP = 1
 
 PANGRAM = "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG"
 # Every character an AIS text field can carry (space through underscore).
@@ -31,21 +31,23 @@ def _wrap(text: str, width: int) -> list[str]:
     return [text[i:i + width] for i in range(0, len(text), width)] or [""]
 
 
-def render_font_audit(canvas: Canvas) -> None:
+def render_font_audit(canvas: Canvas, font: Font | None = None) -> None:
     """The pangram (every letter, in a readable word) followed by the full
     AIS character set (every glyph, in order) - a systematic legibility
     check for the whole font, not just the letters that happen to appear
-    in ship names today."""
+    in ship names today. Lines that no longer fit are simply dropped, so a
+    taller font shows fewer of them rather than spilling off the panel."""
     canvas.clear()
-    width = max_chars(canvas.width)
+    font = font or Font.default()
+    width = max_chars(canvas.width, font)
     lines = [*_wrap(PANGRAM, width), "", *_wrap(CHARSET, width)]
     y = 0
     for line in lines:
-        if y + FONT_H > canvas.height:
+        if y + font.height > canvas.height:
             break
         if line:
-            draw_text(canvas, line, 0, y, TEXT_COLOR)
-        y += LINE_H
+            draw_text(canvas, line, 0, y, TEXT_COLOR, font=font)
+        y += font.height + LINE_GAP
 
 
 def render_icon_audit(canvas: Canvas) -> None:

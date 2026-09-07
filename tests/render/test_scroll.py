@@ -1,3 +1,4 @@
+from ship_observer.render.font import Font
 from ship_observer.render.scroll import Scroller
 
 KEY = (366123456, "name")
@@ -59,6 +60,34 @@ def test_keys_are_independent():
     for _ in range(10):
         s.offset_for(a, "A" * 40, 64, dt=0.1)
     assert s.offset_for(b, "A" * 40, 64, dt=0.0) == 0
+
+
+def test_text_that_only_overflows_in_the_large_font_scrolls_there():
+    """12 characters is 48 px in the 4x6 font (fits a 64 px box) but 72 px in
+    the 6x10 font - the scroller has to measure with the font being drawn."""
+    s = Scroller(speed_px_s=1000.0, pause_s=0.0)
+    text = "A" * 12
+    assert s.offset_for(KEY, text, 64, dt=0.1) == 0
+    for _ in range(5):
+        offset = s.offset_for(KEY, text, 64, dt=0.1, font=Font.large())
+    assert offset < 0
+
+
+def test_large_font_scroll_stops_at_the_end_of_the_text():
+    s = Scroller(speed_px_s=1000.0, pause_s=0.0)
+    text = "A" * 20   # 120 px in the 6x10 font
+    for _ in range(50):
+        offset = s.offset_for(KEY, text, 64, dt=0.1, font=Font.large())
+    assert offset == -(20 * 6 - 64), "must stop with the last character flush right"
+
+
+def test_changing_the_font_resets_the_scroll():
+    """Switching display mode re-measures the same text; a leftover offset
+    from the other font would start the field mid-travel."""
+    s = Scroller(speed_px_s=1000.0, pause_s=0.0)
+    for _ in range(10):
+        s.offset_for(KEY, "A" * 40, 64, dt=0.1)
+    assert s.offset_for(KEY, "A" * 40, 64, dt=0.0, font=Font.large()) == 0
 
 
 def test_retain_drops_state_for_departed_vessels():

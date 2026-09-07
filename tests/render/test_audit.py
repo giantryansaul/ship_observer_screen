@@ -14,6 +14,7 @@ from ship_observer.render.audit import (
     render_icon_audit,
 )
 from ship_observer.render.canvas import Canvas
+from ship_observer.render.font import Font
 from ship_observer.render.layout import render_frame
 from ship_observer.render.scroll import Scroller
 
@@ -38,6 +39,28 @@ def test_font_audit_stays_within_the_canvas():
     c = Canvas(64, 64)
     render_font_audit(c)
     assert all(0 <= x < 64 and 0 <= y < 64 for x, y in lit_pixels(c))
+
+
+def test_font_audit_can_render_the_large_font():
+    """The 6x10 view has to draw the same dump through the same pipeline -
+    fewer, taller lines - without spilling off the panel."""
+    c = Canvas(64, 64)
+    render_font_audit(c, font=Font.large())
+    lit = lit_pixels(c)
+    assert lit, "expected the large font to draw something"
+    assert all(0 <= x < 64 and 0 <= y < 64 for x, y in lit)
+
+    small = Canvas(64, 64)
+    render_font_audit(small)
+    assert lit != lit_pixels(small), "the large view must differ from the 4x6 one"
+
+
+def test_font_audit_wraps_to_the_large_font_line_length():
+    """10 characters per 64 px line in the 6x10 font: a line drawn at the
+    4x6 width would run off the right edge."""
+    c = Canvas(64, 64)
+    render_font_audit(c, font=Font.large())
+    assert max(x for x, y in lit_pixels(c)) < 60
 
 
 def _cell_bounds(index):
