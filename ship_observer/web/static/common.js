@@ -57,7 +57,19 @@ if (displayModeSelect) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: displayModeSelect.value }),
-    });
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("display-mode POST failed");
+      })
+      .catch(() => {
+        // The server never accepted the mode (bad request, or the request
+        // didn't land at all) - pull the real mode back down so the select
+        // doesn't keep showing a value the server disagrees with.
+        fetch("/api/display-mode")
+          .then((r) => r.json())
+          .then((data) => { displayModeSelect.value = data.mode; })
+          .catch(() => {});
+      });
   });
 }
 

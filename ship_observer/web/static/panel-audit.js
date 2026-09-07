@@ -24,10 +24,9 @@ const CAPTIONS = {
   chars: "Every character the panel can draw: the pangram, then the full "
         + "AIS text set in order.",
   icons: "Every category's icon, in the grid position the legend below mirrors.",
-  ships: "1 active vessel (top) and 2 recently departed, below the LAST "
-        + "SEEN divider - includes a resolved destination, an unresolved "
-        + "one, a vessel with no known length, and the fishing icon in "
-        + "context.",
+  ships: "Sample vessel data rendered in the current display mode - "
+        + "includes a resolved destination, an unresolved one, a vessel "
+        + "with no known length, and the fishing icon in context.",
 };
 
 function rgb(color) {
