@@ -16,11 +16,12 @@ function renderLive(state) {
       : v.filtered_reason || (v.static_resolved ? "shown" : "awaiting static");
     const cells = [
       v.slot === null || v.slot === undefined ? "—" : v.slot + 1,
-      v.display_name, v.mmsi, v.category, v.priority,
+      v.display_name, v.mmsi, v.category, v.category_source || "—",
+      v.priority,
       v.length_m === null ? "—" : Math.round(v.length_m) + "m",
       v.call_sign || "—", v.destination || "—", status,
     ];
-    const DESTINATION_CELL = 7;
+    const DESTINATION_CELL = 8;
     cells.forEach((value, i) => {
       const td = document.createElement("td");
       td.textContent = value;
@@ -126,7 +127,8 @@ let lastTableSnapshot = "";
 
 function tableSnapshot(state) {
   const vessels = [...state.live, ...state.history].map((v) => [
-    v.mmsi, v.slot, v.display_name, v.category, v.priority, v.length_m,
+    v.mmsi, v.slot, v.display_name, v.category, v.category_source,
+    v.priority, v.length_m,
     v.call_sign, v.destination, v.eligible, v.filtered_reason,
     v.static_resolved, v.depart_reason,
   ]);

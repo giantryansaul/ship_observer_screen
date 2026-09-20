@@ -46,10 +46,11 @@ CATEGORY_PRIORITY: dict[ShipCategory, int] = {
 def classify(ship_type: int | None) -> ShipCategory:
     """Map an AIS ship-and-cargo type code to a display category.
 
-    None means ShipStaticData has not arrived yet, which is materially
-    different from a resolved-but-uninteresting type.
+    None means ShipStaticData has not arrived yet and 0 is the vessel
+    broadcasting "not available": either way nobody has said what it is,
+    which is materially different from a resolved-but-uninteresting type.
     """
-    if ship_type is None:
+    if ship_type is None or ship_type == 0:
         return ShipCategory.UNKNOWN
     if ship_type in _EXACT:
         return _EXACT[ship_type]

@@ -71,7 +71,8 @@ def test_build_subscription_shape():
     s = Settings.from_env(MINIMAL)
     sub = build_subscription(s)
     assert sub["APIKey"] == "test-key"
-    assert sub["FilterMessageTypes"] == ["PositionReport", "ShipStaticData"]
+    assert sub["FilterMessageTypes"] == [
+        "PositionReport", "ShipStaticData", "StaticDataReport"]
     # AISStream requires latitude-first corner pairs.
     assert sub["BoundingBoxes"] == [[[47.859476, -122.527428],
                                      [47.910359, -122.323322]]]

@@ -4,7 +4,7 @@ import pytest
 
 from ship_observer.ais_client import AisMessage
 from ship_observer.config import Settings
-from ship_observer.models import ShipCategory
+from ship_observer.models import BroadcastFacts, CategorySource, ShipCategory
 from ship_observer.registry import VesselRegistry
 
 T0 = datetime(2026, 8, 26, 17, 0, 0, tzinfo=timezone.utc)
@@ -226,39 +226,195 @@ def test_message_with_no_coordinates_still_updates_last_seen():
     assert change.vessel.last_seen == T0 + timedelta(minutes=5)
 
 
-def test_seed_static_resolves_a_vessel_from_a_cached_payload():
+def class_b_static(mmsi, at, part_a=None, part_b=None, name="TEST SHIP"):
+    """AISStream's StaticDataReport (AIS message 24). Each frame carries one
+    part; the other report rides along zeroed and marked not valid."""
+    report_a = {"Valid": part_a is not None, "Name": part_a or ""}
+    report_b = {"Valid": part_b is not None, "ShipType": 0, "CallSign": "",
+                "Dimension": {"A": 0, "B": 0, "C": 0, "D": 0},
+                **(part_b or {})}
+    return AisMessage(
+        message_type="StaticDataReport", mmsi=mmsi, received_at=at,
+        meta_name=name, lat=IN_BOX[0], lon=IN_BOX[1],
+        payload={"MessageID": 24, "PartNumber": part_a is None,
+                 "ReportA": report_a, "ReportB": report_b},
+    )
+
+
+def test_remembered_facts_resolve_a_vessel_that_has_sent_no_static_data():
     r = VesselRegistry(settings())
     v = r.apply(position(1, T0)).vessel
 
-    seeded = r.seed_static(1, {"Type": 60, "Name": "SWIFTSURE",
-                               "CallSign": "WDF123"})
+    seeded = r.remember(1, BroadcastFacts(
+        name="SWIFTSURE", call_sign="WDF123", imo=9312345, ship_type=60,
+        length_m=30.0, beam_m=8.0))
 
     assert seeded is True
     assert v.static_resolved is True
     assert v.category is ShipCategory.PASSENGER
+    assert v.category_source is CategorySource.REMEMBERED
+    assert v.ship_type == 60
     assert v.priority == 40
-    assert v.name == "SWIFTSURE"
-    assert v.call_sign == "WDF123"
+    assert (v.name, v.call_sign, v.imo) == ("SWIFTSURE", "WDF123", 9312345)
+    assert (v.length_m, v.beam_m) == (30.0, 8.0)
 
 
-def test_seed_static_does_not_forge_a_live_raw_static_payload():
+def test_remembering_does_not_forge_a_live_raw_static_payload():
     """raw_static means "what actually arrived this visit". A seeded visit
     must stay distinguishable from one that resolved over the air."""
     r = VesselRegistry(settings())
     v = r.apply(position(1, T0)).vessel
-    r.seed_static(1, {"Type": 60})
+    r.remember(1, BroadcastFacts(ship_type=60))
     assert v.raw_static is None
 
 
-def test_seed_static_never_overwrites_live_static_data():
+def test_remembering_never_overwrites_live_static_data():
     r = VesselRegistry(settings())
     r.apply(position(1, T0))
     r.apply(static(1, T0, ship_type=80))
 
-    assert r.seed_static(1, {"Type": 60}) is False
-    assert r.live()[0].category is ShipCategory.TANKER
+    assert r.remember(1, BroadcastFacts(ship_type=60, name="OLD NAME")) is False
+    v = r.live()[0]
+    assert v.category is ShipCategory.TANKER
+    assert v.category_source is CategorySource.BROADCAST
+    assert v.name == "POLAR RESOLUTE"
 
 
-def test_seed_static_is_a_noop_for_a_vessel_not_in_the_box():
+def test_remembering_is_a_noop_for_a_vessel_not_in_the_box():
     r = VesselRegistry(settings())
-    assert r.seed_static(42, {"Type": 60}) is False
+    assert r.remember(42, BroadcastFacts(ship_type=60)) is False
+
+
+def test_live_static_data_takes_over_from_a_remembered_category():
+    r = VesselRegistry(settings())
+    v = r.apply(position(1, T0)).vessel
+    r.remember(1, BroadcastFacts(ship_type=60))
+
+    r.apply(static(1, T0 + timedelta(minutes=1), ship_type=80))
+
+    assert v.category is ShipCategory.TANKER
+    assert v.category_source is CategorySource.BROADCAST
+    assert v.raw_static is not None
+
+
+def test_the_first_live_static_message_of_a_seeded_visit_is_reported():
+    """The service writes the visit row at once on this flag; a seeded visit
+    must not leave its over-the-air payload waiting on the write throttle."""
+    r = VesselRegistry(settings())
+    r.apply(position(1, T0))
+    r.remember(1, BroadcastFacts(ship_type=60))
+
+    first = r.apply(static(1, T0 + timedelta(minutes=1)))
+    second = r.apply(static(1, T0 + timedelta(minutes=7)))
+
+    assert first.static_resolved_now is True
+    assert second.static_resolved_now is False
+
+
+def test_a_remembered_name_alone_does_not_stop_the_wait_for_static_data():
+    r = VesselRegistry(settings())
+    v = r.apply(position(1, T0, name=None)).vessel
+
+    assert r.remember(1, BroadcastFacts(name="WINDSONG")) is True
+
+    assert v.name == "WINDSONG"
+    assert v.static_resolved is False
+    assert v.category is ShipCategory.UNKNOWN
+
+
+def test_type_0_is_unknown_and_keeps_its_provisional_priority():
+    r = VesselRegistry(settings())
+    v = r.apply(static(1, T0, ship_type=0)).vessel
+    assert v.static_resolved is True
+    assert v.category is ShipCategory.UNKNOWN
+    assert v.category_source is None
+    assert v.priority == 20
+
+
+def test_a_remembered_type_beats_a_live_type_0():
+    r = VesselRegistry(settings())
+    v = r.apply(static(1, T0, ship_type=0)).vessel
+
+    assert r.remember(1, BroadcastFacts(ship_type=70)) is True
+
+    assert v.category is ShipCategory.CARGO
+    assert v.category_source is CategorySource.REMEMBERED
+    assert v.ship_type == 70
+    assert v.priority == 30
+
+
+def test_a_later_type_0_never_regresses_a_type_stated_this_visit():
+    r = VesselRegistry(settings())
+    v = r.apply(static(1, T0, ship_type=70)).vessel
+    r.apply(static(1, T0 + timedelta(minutes=6), ship_type=0))
+    assert v.category is ShipCategory.CARGO
+    assert v.category_source is CategorySource.BROADCAST
+
+
+def test_a_later_vague_type_never_regresses_a_specific_one_this_visit():
+    r = VesselRegistry(settings())
+    v = r.apply(static(1, T0, ship_type=70)).vessel
+    r.apply(static(1, T0 + timedelta(minutes=6), ship_type=90))
+    assert v.category is ShipCategory.CARGO
+
+
+def test_a_message_that_changes_the_category_is_reported_like_the_first():
+    """Class B states its name and its type in separate frames; the frame
+    that finally says what the vessel is has to reach the visit log at once,
+    not wait out the write throttle."""
+    r = VesselRegistry(settings())
+    r.apply(class_b_static(1, T0, part_a="WINDSONG"))
+    change = r.apply(class_b_static(1, T0 + timedelta(seconds=1),
+                                    part_b={"ShipType": 36}))
+    assert change.vessel.category is ShipCategory.SAILING
+    assert change.static_resolved_now is True
+
+
+def test_a_static_message_reports_the_facts_it_carried():
+    r = VesselRegistry(settings())
+    assert r.apply(position(1, T0)).facts is None
+
+    change = r.apply(static(1, T0 + timedelta(minutes=1)))
+
+    assert change.facts == BroadcastFacts(
+        name="POLAR RESOLUTE", call_sign="WCX8834", imo=9312345, ship_type=80,
+        length_m=240.0, beam_m=32.0)
+
+
+def test_unset_dimensions_are_not_facts():
+    """AIS sends all-zero dimensions for "not available"; remembering them
+    would erase a length an earlier message had stated."""
+    r = VesselRegistry(settings())
+    change = r.apply(static(1, T0, a=0, b=0))
+    assert change.facts.length_m is None
+
+
+def test_class_b_part_a_names_the_vessel_and_nothing_else():
+    r = VesselRegistry(settings())
+    change = r.apply(class_b_static(1, T0, part_a="WINDSONG", name=None))
+
+    assert change.facts == BroadcastFacts(name="WINDSONG")
+    v = change.vessel
+    assert v.name == "WINDSONG"
+    # Part A's zeroed, not-valid ReportB must not read as "type 0, 0 m long".
+    assert v.broadcast_type is None
+    assert v.length_m is None
+    assert v.category is ShipCategory.UNKNOWN
+
+
+def test_class_b_part_b_feeds_call_sign_type_and_dimensions():
+    r = VesselRegistry(settings())
+    r.apply(class_b_static(1, T0, part_a="WINDSONG"))
+    change = r.apply(class_b_static(1, T0 + timedelta(seconds=1), part_b={
+        "ShipType": 36, "CallSign": "WDL4455",
+        "Dimension": {"A": 8, "B": 4, "C": 2, "D": 2}}))
+
+    assert change.facts == BroadcastFacts(call_sign="WDL4455", ship_type=36,
+                                          length_m=12.0, beam_m=4.0)
+    v = change.vessel
+    assert v.name == "WINDSONG"
+    assert v.call_sign == "WDL4455"
+    assert v.category is ShipCategory.SAILING
+    assert v.category_source is CategorySource.BROADCAST
+    assert v.static_resolved is True
+    assert v.raw_static["MessageID"] == 24

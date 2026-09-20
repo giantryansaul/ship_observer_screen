@@ -5,6 +5,7 @@ import pytest
 from ship_observer.ais_client import (
     POSITION_REPORT,
     SHIP_STATIC_DATA,
+    STATIC_DATA_REPORT,
     AisMessage,
     parse_envelope,
     parse_time_utc,
@@ -131,3 +132,22 @@ def test_blank_ship_name_becomes_none():
         "MetaData": {**POSITION_ENVELOPE["MetaData"], "ShipName": "          "},
     }
     assert parse_envelope(envelope, NOW).meta_name is None
+
+
+def test_parses_a_class_b_static_data_report():
+    """AIS message 24: without it a small craft can never say what it is."""
+    envelope = {
+        "MessageType": "StaticDataReport",
+        "MetaData": {"MMSI": 338123456, "ShipName": "WINDSONG",
+                     "latitude": 47.88, "longitude": -122.41,
+                     "time_utc": "2026-08-26 17:04:20.000000000 +0000 UTC"},
+        "Message": {"StaticDataReport": {
+            "MessageID": 24, "PartNumber": True,
+            "ReportA": {"Valid": False, "Name": ""},
+            "ReportB": {"Valid": True, "ShipType": 36, "CallSign": "WDL4455",
+                        "Dimension": {"A": 8, "B": 4, "C": 2, "D": 2}}}},
+    }
+    message = parse_envelope(envelope, NOW)
+    assert message.message_type == STATIC_DATA_REPORT
+    assert message.mmsi == 338123456
+    assert message.payload["ReportB"]["ShipType"] == 36

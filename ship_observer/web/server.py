@@ -84,6 +84,8 @@ class AppState:
             "destination_resolved": self._resolved_destination(vessel),
             "ship_type": vessel.ship_type,
             "category": vessel.category.value,
+            "category_source": (vessel.category_source.value
+                                if vessel.category_source else None),
             "priority": vessel.priority,
             "length_m": vessel.length_m,
             "beam_m": vessel.beam_m,

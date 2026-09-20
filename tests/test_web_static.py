@@ -211,3 +211,11 @@ def test_common_js_wires_the_display_mode_dropdown():
     assert 'getElementById("display-mode")' in js
     assert "display_mode" in js, (
         "the select must follow the display_mode field of the state message")
+
+
+def test_debug_vessel_table_shows_the_category_source():
+    """The owner judges each identity source by eye from this column."""
+    html = (STATIC / "debug.html").read_text()
+    js = (STATIC / "debug.js").read_text()
+    assert "<th>Source</th>" in html
+    assert "v.category_source" in js

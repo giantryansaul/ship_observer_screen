@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from .ais_client import POSITION_REPORT, SHIP_STATIC_DATA, AisMessage
+from .ais_client import (POSITION_REPORT, SHIP_STATIC_DATA,
+                         STATIC_DATA_REPORT, AisMessage)
 from .config import Settings
-from .models import Vessel
-from .shiptypes import classify, priority_for
+from .identity import resolve_identity, type_strength
+from .models import BroadcastFacts, Vessel
+from .shiptypes import priority_for
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,9 @@ class RegistryChange:
     entered: bool = False
     departed: bool = False
     static_resolved_now: bool = False
+    # What a static data message said about the vessel itself, for the
+    # vessel store. None for every other message.
+    facts: BroadcastFacts | None = None
 
 
 def _clean(value: Any) -> str | None:
@@ -28,6 +33,47 @@ def _clean(value: Any) -> str | None:
 
 def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _dimensions(dim: Any) -> tuple[float | None, float | None]:
+    """(length, beam) from an AIS Dimension block. All-zero offsets are the
+    AIS encoding of "not available", not a vessel 0 m long."""
+    if not isinstance(dim, dict):
+        return None, None
+    a, b = _number(dim.get("A")), _number(dim.get("B"))
+    c, d = _number(dim.get("C")), _number(dim.get("D"))
+    length = a + b if a is not None and b is not None else None
+    beam = c + d if c is not None and d is not None else None
+    return length or None, beam or None
+
+
+def _ship_static_facts(p: dict[str, Any]) -> BroadcastFacts:
+    ship_type, imo = p.get("Type"), p.get("ImoNumber")
+    length, beam = _dimensions(p.get("Dimension"))
+    return BroadcastFacts(
+        name=_clean(p.get("Name")),
+        call_sign=_clean(p.get("CallSign")),
+        imo=imo if isinstance(imo, int) and imo > 0 else None,
+        ship_type=ship_type if isinstance(ship_type, int) else None,
+        length_m=length, beam_m=beam,
+    )
+
+
+def _class_b_facts(p: dict[str, Any]) -> BroadcastFacts:
+    """A StaticDataReport frame carries part A (the name) or part B (the
+    rest). The part it does not carry rides along zeroed and marked not
+    valid, and must not be read as "type 0"."""
+    name = call_sign = ship_type = length = beam = None
+    part_a, part_b = p.get("ReportA"), p.get("ReportB")
+    if isinstance(part_a, dict) and part_a.get("Valid"):
+        name = _clean(part_a.get("Name"))
+    if isinstance(part_b, dict) and part_b.get("Valid"):
+        call_sign = _clean(part_b.get("CallSign"))
+        raw_type = part_b.get("ShipType")
+        ship_type = raw_type if isinstance(raw_type, int) else None
+        length, beam = _dimensions(part_b.get("Dimension"))
+    return BroadcastFacts(name=name, call_sign=call_sign, ship_type=ship_type,
+                          length_m=length, beam_m=beam)
 
 
 def _format_eta(eta: Any) -> str | None:
@@ -71,11 +117,23 @@ class VesselRegistry:
             vessel.name = msg.meta_name
 
         static_resolved_now = False
+        facts = None
         if msg.message_type == POSITION_REPORT:
             self._apply_position(vessel, msg)
-        elif msg.message_type == SHIP_STATIC_DATA:
-            static_resolved_now = not vessel.static_resolved
-            self._apply_static(vessel, msg.payload)
+        elif msg.message_type in (SHIP_STATIC_DATA, STATIC_DATA_REPORT):
+            # raw_static, not static_resolved: a visit seeded from the vessel
+            # store is already resolved, and its first over-the-air message
+            # still has to reach the visit log straight away.
+            first, category = vessel.raw_static is None, vessel.category
+            if msg.message_type == SHIP_STATIC_DATA:
+                facts = _ship_static_facts(msg.payload)
+                self._apply_voyage(vessel, msg.payload)
+            else:
+                facts = _class_b_facts(msg.payload)
+            self._apply_static(vessel, facts, msg.payload)
+            # Class B states its type in a later frame than its name, so a
+            # changed category counts the same as the first message.
+            static_resolved_now = first or vessel.category is not category
 
         # A position outside the box means the vessel has left; do not wait
         # out SHIP_TIMEOUT_SECONDS.
@@ -83,10 +141,12 @@ class VesselRegistry:
                 and not self._settings.bbox.contains(msg.lat, msg.lon)):
             self._depart(vessel, msg.received_at, "left_bbox")
             return RegistryChange(vessel, entered=entered, departed=True,
-                                  static_resolved_now=static_resolved_now)
+                                  static_resolved_now=static_resolved_now,
+                                  facts=facts)
 
         return RegistryChange(vessel, entered=entered,
-                              static_resolved_now=static_resolved_now)
+                              static_resolved_now=static_resolved_now,
+                              facts=facts)
 
     def _apply_position(self, vessel: Vessel, msg: AisMessage) -> None:
         p = msg.payload
@@ -107,65 +167,89 @@ class VesselRegistry:
         vessel.nav_status = status if isinstance(status, int) else None
         vessel.raw_position = dict(p)
 
-    def seed_static(self, mmsi: int, payload: dict[str, Any]) -> bool:
-        """Resolve a live vessel from a previous visit's static payload.
+    def remember(self, mmsi: int, facts: BroadcastFacts) -> bool:
+        """Seed a live vessel from the vessel store. True if it changed.
 
         Ship type, call sign and dimensions do not change between visits, so
-        cached data is as good as a live message - except raw_static, which is
-        cleared so a seeded visit stays distinguishable in the log from one
-        that resolved over the air. Live static data always wins: a vessel
-        that has already resolved is never touched.
+        remembered facts are as good as a live message - except raw_static,
+        which stays empty so a seeded visit is distinguishable in the log
+        from one that resolved over the air. Live static data always wins:
+        only fields this visit has not heard are filled, and the remembered
+        type goes through the identity precedence like any other source.
         """
         vessel = self._live.get(mmsi)
-        if vessel is None or vessel.static_resolved:
+        if vessel is None:
             return False
-        self._apply_static(vessel, payload)
-        vessel.raw_static = None
-        return True
 
-    def _apply_static(self, vessel: Vessel, p: dict[str, Any]) -> None:
-        vessel.name = _clean(p.get("Name")) or vessel.name
-        vessel.call_sign = _clean(p.get("CallSign")) or vessel.call_sign
-        vessel.destination = _clean(p.get("Destination")) or vessel.destination
+        def seedable() -> tuple:
+            return (vessel.name, vessel.call_sign, vessel.imo, vessel.length_m,
+                    vessel.beam_m, vessel.category, vessel.static_resolved)
 
+        before = seedable()
+        if vessel.static_resolved:
+            vessel.name = vessel.name or facts.name
+        else:
+            # Until static data arrives the name is only the feed's metadata
+            # label, which the vessel's own stated name outranks.
+            vessel.name = facts.name or vessel.name
+        vessel.call_sign = vessel.call_sign or facts.call_sign
+        vessel.imo = vessel.imo or facts.imo
+        vessel.length_m = vessel.length_m or facts.length_m
+        vessel.beam_m = vessel.beam_m or facts.beam_m
+        vessel.remembered_type = facts.ship_type
+        # A store row can hold a name and nothing else (Class B part A). That
+        # is not enough to stop waiting for static data.
+        if facts.ship_type is not None:
+            vessel.static_resolved = True
+        self._resolve_identity(vessel)
+        return before != seedable()
+
+    def _apply_static(self, vessel: Vessel, facts: BroadcastFacts,
+                      payload: dict[str, Any]) -> None:
         # Real AIS static data can arrive as partial retransmissions (Class B
         # splits it across separate frames; any decoder can also just drop a
         # field). A later message missing a field must never regress state a
         # prior message already resolved - keep vessel.<field> whenever the
-        # new value is absent or malformed, exactly like the string fields
-        # above. This matters most for category/priority: a TANKER silently
-        # reverting to UNKNOWN would let it lose its display slot.
-        ship_type = p.get("Type")
-        if isinstance(ship_type, int):
-            vessel.ship_type = ship_type
-            vessel.category = classify(vessel.ship_type)
-            vessel.priority = priority_for(vessel.category)
-
-        imo = p.get("ImoNumber")
-        if isinstance(imo, int) and imo > 0:
-            vessel.imo = imo
-
-        dim = p.get("Dimension")
-        if isinstance(dim, dict):
-            a, b = _number(dim.get("A")), _number(dim.get("B"))
-            c, d = _number(dim.get("C")), _number(dim.get("D"))
-            if a is not None and b is not None:
-                vessel.length_m = a + b
-            if c is not None and d is not None:
-                vessel.beam_m = c + d
-
-        draught = _number(p.get("MaximumStaticDraught"))
-        if draught is not None:
-            vessel.draught_m = draught
-
-        eta = _format_eta(p.get("Eta"))
-        if eta is not None:
-            vessel.eta = eta
+        # new value is absent or malformed. This matters most for
+        # category/priority: a TANKER silently reverting to UNKNOWN would let
+        # it lose its display slot. A vaguer type is the same absence, spelled out.
+        vessel.name = facts.name or vessel.name
+        vessel.call_sign = facts.call_sign or vessel.call_sign
+        vessel.imo = facts.imo or vessel.imo
+        vessel.length_m = facts.length_m or vessel.length_m
+        vessel.beam_m = facts.beam_m or vessel.beam_m
+        if (facts.ship_type is not None and type_strength(facts.ship_type)
+                >= type_strength(vessel.broadcast_type)):
+            vessel.broadcast_type = facts.ship_type
+        self._resolve_identity(vessel)
 
         vessel.static_resolved = True
         # raw_static intentionally always overwrites: it exists to show what
         # the most recent message actually contained, partial or not.
-        vessel.raw_static = dict(p)
+        vessel.raw_static = dict(payload)
+
+    @staticmethod
+    def _apply_voyage(vessel: Vessel, p: dict[str, Any]) -> None:
+        """The parts of ShipStaticData that describe the voyage, not the
+        vessel, and so are never remembered between visits."""
+        vessel.destination = _clean(p.get("Destination")) or vessel.destination
+        draught = _number(p.get("MaximumStaticDraught"))
+        if draught is not None:
+            vessel.draught_m = draught
+        eta = _format_eta(p.get("Eta"))
+        if eta is not None:
+            vessel.eta = eta
+
+    @staticmethod
+    def _resolve_identity(vessel: Vessel) -> None:
+        identity = resolve_identity(
+            mmsi=vessel.mmsi, name=vessel.name,
+            broadcast_type=vessel.broadcast_type,
+            remembered_type=vessel.remembered_type)
+        vessel.ship_type = identity.ship_type
+        vessel.category = identity.category
+        vessel.category_source = identity.category_source
+        vessel.priority = priority_for(identity.category)
 
     def _depart(self, vessel: Vessel, when: datetime, reason: str) -> None:
         self._live.pop(vessel.mmsi, None)

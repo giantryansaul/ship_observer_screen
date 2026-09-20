@@ -9,7 +9,9 @@ Replaying it proves the pipeline reproduces the recorded visits, and the
 render walk proves every frame of four days of Puget Sound traffic stays
 legible on the panel.
 """
+import contextlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,29 @@ async def test_weekend_replay_reproduces_the_recorded_visits(tmp_path):
     result = await replay(SESSION, settings, speed=0.0)
 
     assert result == json.loads(EXPECTED.read_text())
+
+
+async def test_weekend_replay_identifies_a_regular_on_a_visit_with_no_static_data(tmp_path):
+    """VOYAGER OF THE SEAS sent static data on her first pass and none on her
+    second. The vessel store is why the second is a passenger ship and not a
+    question mark - and the visit log still shows that nothing arrived."""
+    db = tmp_path / "replay.db"
+    await replay(SESSION, Settings.from_env({**ENV, "DB_PATH": str(db)}),
+                 speed=0.0)
+
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.row_factory = sqlite3.Row
+        visits = conn.execute(
+            "SELECT category, raw_static FROM ship_log "
+            "WHERE mmsi = 311317000 ORDER BY entered_at").fetchall()
+        remembered = conn.execute(
+            "SELECT name, ship_type FROM vessel WHERE mmsi = 311317000"
+        ).fetchone()
+
+    assert [v["category"] for v in visits] == ["passenger", "passenger"]
+    assert visits[0]["raw_static"] is not None   # heard over the air
+    assert visits[1]["raw_static"] is None       # seeded from the store
+    assert dict(remembered) == {"name": "VOYAGER OF THE SEAS", "ship_type": 60}
 
 
 def _walk_frames(settings) -> list[bytes]:

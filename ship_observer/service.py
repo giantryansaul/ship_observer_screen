@@ -192,8 +192,12 @@ class Service:
                 self.record_event("INFO", "registry",
                                   f"entered: {vessel.display_name}",
                                   {"mmsi": vessel.mmsi})
-                if not vessel.static_resolved:
-                    await self._seed_static(vessel)
+                await self._seed_from_store(vessel)
+            if change.facts is not None:
+                # After seeding, so a visit that opens with static data is
+                # never seeded from the very message that opened it.
+                await self._safe(self.storage.remember_broadcast(
+                    vessel.mmsi, change.facts, message.received_at))
             if change.departed:
                 await self._safe(self.storage.end_visit(vessel,
                                                         vessel.depart_reason or "left_bbox"))
@@ -209,23 +213,23 @@ class Service:
                 # card the throttle exists to protect.
                 await self._safe(self.storage.update_visit(vessel))
 
-    async def _seed_static(self, vessel: Vessel) -> None:
-        """Resolve a fresh visit from the vessel's last resolved visit.
+    async def _seed_from_store(self, vessel: Vessel) -> None:
+        """Start a fresh visit from what the vessel store remembers.
 
         AISStream's static delivery is patchy - 64 of the first weekend's 165
         visits never received ShipStaticData, including regulars that had
-        resolved it on an earlier pass - so a new visit starts from what a
+        resolved it on an earlier pass - so a new visit starts from what any
         previous one already learned rather than showing UNKNOWN again.
         """
         try:
-            payload = await self.storage.latest_static(vessel.mmsi)
+            facts = await self.storage.remembered_broadcast(vessel.mmsi)
         except Exception:
-            log.exception("static-cache lookup failed for %s", vessel.mmsi)
+            log.exception("vessel store read failed for %s", vessel.mmsi)
             return
-        if payload and self.registry.seed_static(vessel.mmsi, payload):
+        if facts is not None and self.registry.remember(vessel.mmsi, facts):
             await self._safe(self.storage.update_visit(vessel))
             self.record_event("INFO", "registry",
-                              f"static seeded from a previous visit: "
+                              f"seeded from the vessel store: "
                               f"{vessel.display_name}",
                               {"mmsi": vessel.mmsi})
 

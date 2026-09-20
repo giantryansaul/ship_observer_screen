@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import Vessel
+from .identity import type_strength
+from .models import BroadcastFacts, Vessel
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ship_log (
@@ -62,6 +63,38 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- The permanent vessel store: one row per MMSI, never pruned. Each source's
+-- answer is kept untouched and merged at read time (ADR-0001).
+CREATE TABLE IF NOT EXISTS vessel (
+  mmsi         INTEGER PRIMARY KEY,
+  name         TEXT,
+  call_sign    TEXT,
+  imo          INTEGER,
+  ship_type    INTEGER,
+  length_m     REAL,
+  beam_m       REAL,
+  broadcast_at TEXT
+);
+"""
+
+_BROADCAST_COLUMNS = ("name", "call_sign", "imo", "ship_type", "length_m",
+                      "beam_m")
+
+# Runs on every open(). Before the vessel store existed a regular was seeded
+# from its latest visit that heard static data over the air (raw_static set;
+# a seeded visit has none), so an upgraded panel starts from those same rows
+# instead of forgetting every regular until it rebroadcasts. Newest visit
+# first and OR IGNORE: one row per MMSI, and never over a row the store
+# already holds. Zero dimensions are the AIS encoding of "not available".
+_BACKFILL_FROM_VISIT_LOG = """
+INSERT OR IGNORE INTO vessel
+  (mmsi, name, call_sign, imo, ship_type, length_m, beam_m, broadcast_at)
+SELECT mmsi, name, call_sign, imo, ship_type,
+       NULLIF(length_m, 0), NULLIF(beam_m, 0), last_seen
+FROM ship_log
+WHERE static_resolved = 1 AND raw_static IS NOT NULL
+ORDER BY entered_at DESC
 """
 
 _VISIT_COLUMNS = (
@@ -150,10 +183,15 @@ class Storage:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        # One definition of "which type code says more", shared with the
+        # identity module instead of re-spelled in SQL.
+        conn.create_function("type_strength", 1, type_strength,
+                             deterministic=True)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         conn.executescript(SCHEMA)
+        conn.execute(_BACKFILL_FROM_VISIT_LOG)
         conn.commit()
         self._conn = conn
 
@@ -205,24 +243,40 @@ class Storage:
             vessel.departed_at = datetime.now(timezone.utc)
         await self.update_visit(vessel)
 
-    async def latest_static(self, mmsi: int) -> dict[str, Any] | None:
-        """The most recent visit's over-the-air static payload for a vessel.
+    async def remember_broadcast(self, mmsi: int, facts: BroadcastFacts,
+                                 when: datetime) -> None:
+        """Merge one static data message into the vessel store.
 
-        Powers cross-visit seeding: only rows whose payload actually arrived
-        this-or-some visit count, so a seeded visit (raw_static NULL) can
-        never become the source for another seed.
+        Static data arrives as partial retransmissions, so a field the
+        message lacks keeps its stored value, and a vaguer type (0, or the
+        90s "other" codes) never replaces a more specific one the vessel
+        once stated.
         """
+        values = {c: getattr(facts, c) for c in _BROADCAST_COLUMNS}
+        if all(value is None for value in values.values()):
+            return
+        kept = [c for c in _BROADCAST_COLUMNS if c != "ship_type"]
+        assignments = [f"{c} = COALESCE(excluded.{c}, vessel.{c})" for c in kept]
+        assignments.append(
+            "ship_type = CASE WHEN type_strength(excluded.ship_type) "
+            ">= type_strength(vessel.ship_type) "
+            "THEN excluded.ship_type ELSE vessel.ship_type END")
+        assignments.append("broadcast_at = excluded.broadcast_at")
+        columns = ", ".join(_BROADCAST_COLUMNS)
+        placeholders = ", ".join(f":{c}" for c in _BROADCAST_COLUMNS)
+        await self._execute(
+            f"INSERT INTO vessel (mmsi, {columns}, broadcast_at) "
+            f"VALUES (:mmsi, {placeholders}, :broadcast_at) "
+            f"ON CONFLICT(mmsi) DO UPDATE SET {', '.join(assignments)}",
+            {**values, "mmsi": mmsi, "broadcast_at": _iso(when)},
+        )
+
+    async def remembered_broadcast(self, mmsi: int) -> BroadcastFacts | None:
+        """What a vessel has broadcast about itself on any visit, ever."""
         rows = await self._fetchall(
-            "SELECT raw_static FROM ship_log "
-            "WHERE mmsi = ? AND static_resolved = 1 AND raw_static IS NOT NULL "
-            "ORDER BY entered_at DESC LIMIT 1", (mmsi,))
-        if not rows:
-            return None
-        try:
-            payload = json.loads(rows[0]["raw_static"])
-        except (TypeError, ValueError):
-            return None
-        return payload if isinstance(payload, dict) else None
+            f"SELECT {', '.join(_BROADCAST_COLUMNS)} FROM vessel "
+            "WHERE mmsi = ?", (mmsi,))
+        return BroadcastFacts(**rows[0]) if rows else None
 
     async def get_setting(self, key: str) -> str | None:
         """One app-level setting, or None when it was never written."""

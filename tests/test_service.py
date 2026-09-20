@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from ship_observer.ais_client import AisMessage
 from ship_observer.config import Settings
 from ship_observer.drivers.null import NullDriver
-from ship_observer.models import DisplayMode, ShipCategory
+from ship_observer.models import CategorySource, DisplayMode, ShipCategory
 from ship_observer.selection import is_eligible
 from ship_observer.service import DWELL_SECONDS, Service
 from ship_observer.storage import Storage
@@ -401,45 +402,112 @@ async def test_run_exits_nonzero_when_a_supervised_task_fails(tmp_path, monkeypa
         await svc.run()
 
 
-async def test_entry_seeds_static_from_a_previous_resolved_visit(tmp_path):
-    """SWIFTSURE resolved static in only 4 of its 12 weekend visits; the other
-    8 sat on the panel with the UNKNOWN icon. Ship type and call sign do not
-    change between Friday and Sunday, so seed them from the last resolved
-    visit instead of waiting for AISStream to deliver static data again."""
-    settings = Settings.from_env(env(tmp_path))
-
-    first = Service(settings, driver=NullDriver(64, 64),
-                    client=FakeClient([position(1, T0),
-                                       static(1, T0 + timedelta(seconds=30))]))
-    await first.start()
-    task = asyncio.create_task(first.ingest_loop())
+async def _ingest(tmp_path, messages, **overrides):
+    """Run one service lifetime over `messages`; the caller stops it."""
+    svc = Service(Settings.from_env(env(tmp_path, **overrides)),
+                  driver=NullDriver(64, 64), client=FakeClient(messages))
+    await svc.start()
+    task = asyncio.create_task(svc.ingest_loop())
     await asyncio.sleep(0.1)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+    return svc
+
+
+async def test_entry_seeds_a_regular_from_the_vessel_store(tmp_path):
+    """SWIFTSURE resolved static in only 4 of its 12 weekend visits; the other
+    8 sat on the panel with the UNKNOWN icon. Ship type and call sign do not
+    change between visits, so a vessel identified once is seeded from the
+    vessel store instead of waiting for AISStream to deliver static data
+    again."""
+    first = await _ingest(tmp_path, [position(1, T0),
+                                     static(1, T0 + timedelta(seconds=30))])
     await first.stop()
 
-    second = Service(settings, driver=NullDriver(64, 64),
-                     client=FakeClient([position(1, T0 + timedelta(hours=6))]))
-    await second.start()
+    second = await _ingest(tmp_path, [position(1, T0 + timedelta(hours=6))])
     try:
-        task = asyncio.create_task(second.ingest_loop())
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
         vessel = second.registry.live()[0]
         assert vessel.static_resolved is True
         assert vessel.category is ShipCategory.CARGO
+        assert vessel.category_source is CategorySource.REMEMBERED
+        assert vessel.call_sign == "H3RC"
 
         rows = await second.storage._fetchall("SELECT * FROM ship_log ORDER BY id")
         assert len(rows) == 2
         assert rows[-1]["static_resolved"] == 1
         assert rows[-1]["ship_type"] == 70
+        assert rows[-1]["category"] == "cargo"
         assert rows[-1]["raw_static"] is None  # seeded, not received this visit
     finally:
         await second.stop()
+
+
+async def test_a_regular_is_remembered_after_the_visit_log_forgets_it(tmp_path):
+    """The visit log keeps seven days; the vessel store keeps everything. A
+    ferry back from a month in the yard must not be a question mark."""
+    first = await _ingest(tmp_path, [static(1, T0)])
+    await first.stop()
+
+    with contextlib.closing(sqlite3.connect(tmp_path / "t.db")) as conn:
+        conn.execute("DELETE FROM ship_log")   # what retention does in time
+        conn.commit()
+
+    second = await _ingest(tmp_path, [position(1, T0 + timedelta(days=90))])
+    try:
+        vessel = second.registry.live()[0]
+        assert vessel.category is ShipCategory.CARGO
+        assert vessel.category_source is CategorySource.REMEMBERED
+    finally:
+        await second.stop()
+
+
+async def test_a_visit_that_opens_with_static_data_is_not_seeded_from_itself(tmp_path):
+    svc = await _ingest(tmp_path, [static(1, T0)])
+    try:
+        vessel = svc.registry.live()[0]
+        assert vessel.category_source is CategorySource.BROADCAST
+        assert vessel.raw_static is not None
+    finally:
+        await svc.stop()
+
+
+async def test_a_remembered_type_survives_a_visit_that_broadcasts_type_0(tmp_path):
+    first = await _ingest(tmp_path, [static(1, T0)])
+    await first.stop()
+
+    second = await _ingest(tmp_path, [
+        static(1, T0 + timedelta(hours=6), ship_type=0)])
+    try:
+        vessel = second.registry.live()[0]
+        assert vessel.category is ShipCategory.CARGO
+        assert vessel.category_source is CategorySource.REMEMBERED
+        remembered = await second.storage.remembered_broadcast(1)
+        assert remembered.ship_type == 70
+    finally:
+        await second.stop()
+
+
+async def test_a_vessel_store_failure_never_stops_ingest(tmp_path, monkeypatch):
+    svc = Service(Settings.from_env(env(tmp_path)), driver=NullDriver(64, 64),
+                  client=FakeClient([static(1, T0), position(2, T0)]))
+    await svc.start()
+
+    async def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(svc.storage, "remember_broadcast", boom)
+    monkeypatch.setattr(svc.storage, "remembered_broadcast", boom)
+    try:
+        task = asyncio.create_task(svc.ingest_loop())
+        await asyncio.sleep(0.1)
+        assert not task.done()
+        assert {v.mmsi for v in svc.registry.live()} == {1, 2}
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    finally:
+        await svc.stop()
 
 
 async def test_start_defaults_the_display_mode_when_nothing_is_stored(service):

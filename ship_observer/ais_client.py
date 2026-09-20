@@ -16,7 +16,10 @@ from .config import Settings
 
 POSITION_REPORT = "PositionReport"
 SHIP_STATIC_DATA = "ShipStaticData"
-SUBSCRIBED_TYPES = (POSITION_REPORT, SHIP_STATIC_DATA)
+# AIS message 24, the Class B counterpart of ShipStaticData. Without it a
+# small craft can never say what it is.
+STATIC_DATA_REPORT = "StaticDataReport"
+SUBSCRIBED_TYPES = (POSITION_REPORT, SHIP_STATIC_DATA, STATIC_DATA_REPORT)
 
 # AISStream emits Go's default time format: nanosecond precision plus a
 # trailing zone label. datetime.strptime handles at most 6 fractional digits,

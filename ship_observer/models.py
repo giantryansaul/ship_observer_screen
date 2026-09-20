@@ -22,6 +22,14 @@ class ShipCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+class CategorySource(str, Enum):
+    """Where a vessel's category came from. The values are also the API
+    identifiers the debug page shows."""
+
+    BROADCAST = "broadcast"      # static data received during this visit
+    REMEMBERED = "remembered"    # the vessel store, from an earlier visit
+
+
 class DisplayMode(str, Enum):
     """How many vessels the panel shows at once.
 
@@ -94,6 +102,22 @@ class BoundingBox:
         return [[[self.lat_min, self.lon_min], [self.lat_max, self.lon_max]]]
 
 
+@dataclass(frozen=True)
+class BroadcastFacts:
+    """What one static data message said about the vessel itself.
+
+    Only the facts that outlive a visit: destination, draught and ETA belong
+    to the voyage. None means the message did not carry the field.
+    """
+
+    name: str | None = None
+    call_sign: str | None = None
+    imo: int | None = None
+    ship_type: int | None = None
+    length_m: float | None = None
+    beam_m: float | None = None
+
+
 @dataclass
 class Vessel:
     """One visit by one vessel. A re-entry after departure is a new Vessel."""
@@ -106,9 +130,14 @@ class Vessel:
     call_sign: str | None = None
     destination: str | None = None
 
+    # The merged vessel identity (see identity.py): the type code that won,
+    # its category, and which source said so. The two inputs sit below.
     ship_type: int | None = None
     category: ShipCategory = ShipCategory.UNKNOWN
+    category_source: CategorySource | None = None
     priority: int = 20
+    broadcast_type: int | None = None     # stated during this visit
+    remembered_type: int | None = None    # from the vessel store
 
     imo: int | None = None
     length_m: float | None = None

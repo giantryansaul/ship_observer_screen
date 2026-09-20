@@ -77,6 +77,16 @@ def test_unresolved_vessels_are_never_hard_gated():
     assert is_eligible(unresolved, s) is True
 
 
+def test_a_vessel_that_broadcast_type_0_is_never_hard_gated():
+    """Static data arrived but said "type not available", often with no
+    dimensions either. It is as unknown as a vessel still waiting, and the
+    big vessels that do this are the ones most worth showing."""
+    s = settings(MIN_LENGTH_METERS="50", EXCLUDE_CATEGORIES="unknown")
+    declined = vessel(1, 0, ShipCategory.UNKNOWN, 20, length=None, resolved=True)
+    assert is_eligible(declined, s) is True
+    assert filtered_reason(declined, s) is None
+
+
 def test_exclude_categories_gate():
     s = settings(EXCLUDE_CATEGORIES="fishing,sailing")
     assert is_eligible(vessel(1, 0, ShipCategory.FISHING, 10, 18.0), s) is False

@@ -7,7 +7,8 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from ship_observer.config import Settings
-from ship_observer.models import DisplayMode, ShipCategory, Vessel
+from ship_observer.models import (CategorySource, DisplayMode, ShipCategory,
+                                  Vessel)
 from ship_observer.registry import VesselRegistry
 from ship_observer.storage import Storage
 from ship_observer.web.server import AppState, create_app
@@ -217,6 +218,16 @@ async def test_state_lists_live_vessels_with_slot_assignment(client):
     assert all("slot" in v and "eligible" in v for v in body["live"])
 
 
+async def test_state_says_where_each_category_came_from(client):
+    registry = client.app_state.registry
+    registry._live[1] = vessel(1, category_source=CategorySource.REMEMBERED)
+    registry._live[2] = vessel(2, category=ShipCategory.UNKNOWN,
+                               static_resolved=False)
+    body = await (await client.get("/api/state")).json()
+    sources = {v["mmsi"]: v["category_source"] for v in body["live"]}
+    assert sources == {1: "remembered", 2: None}
+
+
 async def test_state_resolves_a_us_guid_destination_for_the_debug_page(client, monkeypatch):
     from ship_observer.uscg_locations import GuidPlace
     monkeypatch.setattr(
@@ -323,7 +334,10 @@ async def test_events_endpoint_rejects_a_malformed_since_timestamp(client):
 
 
 async def test_traffic_summary_endpoint(client):
-    await client.app_state.storage.begin_visit(vessel(1))
+    # Entered now, not at the fixed T0: the window is measured from today.
+    now = datetime.now(timezone.utc)
+    await client.app_state.storage.begin_visit(
+        vessel(1, entered_at=now, last_seen=now))
     body = await (await client.get("/api/traffic-summary?window=7d")).json()
     assert body["total_visits"] == 1
     assert body["window_seconds"] == 604800

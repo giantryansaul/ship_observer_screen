@@ -10,7 +10,8 @@ from ship_observer.shiptypes import (
 # Written independently of the implementation so it catches a shifted range or a
 # dropped exact-code entry, not just a type error.
 EXPECTED_BY_CODE = {
-    **{c: ShipCategory.OTHER for c in range(0, 30)},
+    0: ShipCategory.UNKNOWN,                            # "not available"
+    **{c: ShipCategory.OTHER for c in range(1, 30)},
     30: ShipCategory.FISHING,
     31: ShipCategory.TUG,
     32: ShipCategory.TUG,
@@ -44,7 +45,7 @@ EXPECTED_BY_CODE = {
     (70, ShipCategory.CARGO), (79, ShipCategory.CARGO),
     (80, ShipCategory.TANKER), (89, ShipCategory.TANKER),
     (50, ShipCategory.OTHER), (33, ShipCategory.OTHER), (90, ShipCategory.OTHER),
-    (0, ShipCategory.OTHER),
+    (0, ShipCategory.UNKNOWN), (1, ShipCategory.OTHER),
 ])
 def test_classify_boundaries(code, expected):
     assert classify(code) is expected
@@ -53,6 +54,12 @@ def test_classify_boundaries(code, expected):
 def test_classify_none_is_unknown():
     """No ShipStaticData yet - distinct from OTHER, which is a resolved type."""
     assert classify(None) is ShipCategory.UNKNOWN
+
+
+def test_classify_not_available_is_unknown():
+    """Type 0 is a vessel declining to say what it is. OTHER is an answer;
+    UNKNOWN is the absence of one, and keeps the vessel a lookup candidate."""
+    assert classify(0) is ShipCategory.UNKNOWN
 
 
 @pytest.mark.parametrize("code", [-1, 100, 999])

@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, field
 
 from .config import Settings
-from .models import Vessel
+from .models import ShipCategory, Vessel
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,10 @@ class RotationView:
 def filtered_reason(vessel: Vessel, settings: Settings) -> str | None:
     """Return why a vessel is filtered, or None if eligible."""
     if not vessel.static_resolved:
+        return None
+    # Static data that said "type not available" leaves the vessel exactly
+    # as unknown as one still waiting for it, so it gets the same pass.
+    if vessel.category is ShipCategory.UNKNOWN:
         return None
     if vessel.category in settings.exclude_categories:
         return f"excluded_category:{vessel.category.value}"
